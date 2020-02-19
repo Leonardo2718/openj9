@@ -555,12 +555,88 @@ bool J9::ValuePropagation::transformUnsafeCopyMemoryCall(TR::Node *arraycopyNode
          }
       }
    return false;
+   }
 
+static TR_YesNoMaybe isValue(TR::VPConstraint *constraint)
+   {
+   if (constraint == NULL)
+      return TR_maybe;
+
+   if (constraint->isNullObject())
+      return TR_no;
+
+   if (constraint->isClassObject() == TR_yes)
+      return TR_no;
+
+   TR::VPClassType *maybeUnresolvedType = constraint->getClassType();
+   if (maybeUnresolvedType == NULL)
+      return TR_maybe;
+
+   TR::VPResolvedClass *type = maybeUnresolvedType->asResolvedClass();
+   if (type == NULL)
+      return TR_maybe;
+
+   TR::Compilation *comp = TR::comp();
+   TR_OpaqueClassBlock *clazz = type->getClass();
+   if (clazz == comp->getObjectClassPointer())
+      return type->isFixedClass() ? TR_no : TR_maybe;
+
+   if (TR::Compiler->cls.isInterfaceClass(comp, clazz))
+      return TR_maybe;
+
+   // No AOT validation is necessary here, since whether a class is a value
+   // type is determined by its ROM class.
+   J9Class *j9class = reinterpret_cast<J9Class*>(clazz);
+   bool val = J9_ARE_ANY_BITS_SET(j9class->classFlags, J9ClassIsValueType);
+   return val ? TR_yes : TR_no;
    }
 
 void
 J9::ValuePropagation::constrainRecognizedMethod(TR::Node *node)
    {
+   const bool isIsObjectEqualityCompare =
+      comp()->getSymRefTab()->isNonHelper(
+         node->getSymbolReference(),
+         TR::SymbolReferenceTable::objectEqualityComparisonSymbol);
+
+   if (isIsObjectEqualityCompare)
+      {
+      addGlobalConstraint(node, TR::VPIntRange::create(this, 0, 1));
+
+      bool lhsGlobal, rhsGlobal;
+      TR::Node *lhsNode = node->getChild(0);
+      TR::Node *rhsNode = node->getChild(1);
+      TR::VPConstraint *lhs = getConstraint(lhsNode, lhsGlobal);
+      TR::VPConstraint *rhs = getConstraint(rhsNode, rhsGlobal);
+
+      const TR_YesNoMaybe isLhsValue = isValue(lhs);
+      const TR_YesNoMaybe isRhsValue = isValue(rhs);
+      const bool areSameRef = getValueNumber(lhsNode) == getValueNumber(rhsNode)
+        || lhs != NULL && rhs != NULL && lhs->mustBeEqual(rhs, this);
+
+      if (isLhsValue == TR_no || isRhsValue == TR_no || areSameRef)
+         {
+         if (performTransformation(
+               comp(),
+               "%sChanging n%un from <objectEqualityComparison> to acmpeq\n",
+               OPT_DETAILS,
+               node->getGlobalIndex()))
+            {
+            TR::Node::recreate(node, TR::acmpeq);
+
+            // It might now be possible to fold.
+            ValuePropagationPtr acmpeqHandler = constraintHandlers[TR::acmpeq];
+            TR::Node *replacement = acmpeqHandler(this, node);
+            TR_ASSERT_FATAL(
+               replacement == node,
+               "can't replace n%un here",
+               node->getGlobalIndex());
+            }
+         }
+
+      return;
+      }
+
    // Only constrain resolved calls
    if (!node->getSymbol()->isResolvedMethod())
       return;
