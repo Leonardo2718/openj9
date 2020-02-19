@@ -56,6 +56,7 @@ class Simplifier : public OMR::Simplifier
 
    bool isRecognizedPowMethod(TR::Node *node);
    bool isRecognizedAbsMethod(TR::Node *node);
+   bool isObjectEqualityComparison(TR::Node *node);
 
    TR::Node *getUnsafeIorByteChild(TR::Node * child, TR::ILOpCodes b2iOpCode, int32_t mulConst);
    TR::Node *getLastUnsafeIorByteChild(TR::Node * child);
