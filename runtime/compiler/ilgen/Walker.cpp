@@ -5088,6 +5088,26 @@ TR_J9ByteCodeIlGenerator::loadInstance(TR::SymbolReference * symRef)
          }
       }
 
+   if (TR::Compiler->om.areValueTypesEnabled())
+      {
+      const int32_t classCpIndex = method()->classCPIndexOfFieldOrStatic(symRef->getCPIndex());
+      auto* j9class = reinterpret_cast<J9Class *>(method()->getClassFromConstantPool(comp(), classCpIndex));
+
+      // valueTypeClass will be NULL if it is unresolved.  Abort the compilation and
+      // track the failure with a static debug counter
+      if (j9class == NULL)
+         {
+         abortForUnresolvedValueTypeOp("getfield", "field");
+         }
+      else if (J9_IS_J9CLASS_FLATTENED(j9class))
+         {
+         // we are dealing with a flattened value type so emmit helper call
+         TR::Node* helperCall = TR::Node::createWithSymRef(TR::call, 2, 2, value, address, comp()->getSymRefTab()->findOrCreateGetFieldHelperSymbolRef());
+         genTreeTop(helperCall);
+         return;
+         }
+      }
+
    TR::Node * load, *dummyLoad;
 
    TR::ILOpCodes op = _generateReadBarriersForFieldWatch ? comp()->il.opCodeForIndirectReadBarrier(type): comp()->il.opCodeForIndirectLoad(type);
@@ -5894,6 +5914,26 @@ TR_J9ByteCodeIlGenerator::loadArrayElement(TR::DataType dataType, TR::ILOpCodes 
    TR::Node * arrayBaseAddress = pop();
    TR::Node * elementAddress = pop();
 
+   if (dataType == TR::Address && TR::Compiler->om.areValueTypesEnabled())
+      {
+      const int32_t classCpIndex = method()->classCPIndexOfFieldOrStatic(cpIndex);
+      auto* j9class = reinterpret_cast<J9Class *>(method()->getClassFromConstantPool(comp(), classCpIndex));
+
+      // valueTypeClass will be NULL if it is unresolved.  Abort the compilation and
+      // track the failure with a static debug counter
+      if (j9class == NULL)
+         {
+         abortForUnresolvedValueTypeOp("aastore", "field");
+         }
+      else if (J9_IS_J9CLASS_FLATTENED(j9class))
+         {
+         // we are dealing with a flattened value type so emmit helper call
+         TR::Node* helperCall = TR::Node::createWithSymRef(TR::call, 2, 2, value, address, comp()->getSymRefTab()->findOrCreateAaStoreHelperSymbolRef());
+         genTreeTop(helperCall);
+         return;
+         }
+      }
+
    TR::Node *element = NULL;
    TR::SymbolReference * elementSymRef = symRefTab()->findOrCreateArrayShadowSymbolRef(dataType, arrayBaseAddress);
    element = TR::Node::createWithSymRef(nodeop, 1, 1, elementAddress, elementSymRef);
@@ -6165,6 +6205,14 @@ TR_J9ByteCodeIlGenerator::genWithField(uint16_t fieldCpIndex)
 
    TR::Node *newFieldValue = pop();
    TR::Node *originalObject = pop();
+
+   if (J9_IS_J9CLASS_FLATTENED(valueClass))
+      {
+      // we are dealing with a flattened value type so emmit helper call
+      TR::Node* helperCall = TR::Node::createWithSymRef(TR::call, 2, 2, originalObject, newFieldValue, comp()->getSymRefTab()->findOrCreateWithFieldHelperSymbolRef());
+      genTreeTop(helperCall);
+      return;
+      }
 
    /*
     * Insert nullchk for the original object as requested by the JVM spec.
@@ -6668,6 +6716,26 @@ TR_J9ByteCodeIlGenerator::storeInstance(int32_t cpIndex)
 
    TR::Node * addressNode  = address;
    TR::Node * parentObject = address;
+
+   if (TR::Compiler->om.areValueTypesEnabled())
+      {
+      const int32_t classCpIndex = method()->classCPIndexOfFieldOrStatic(cpIndex;
+      auto* j9class = reinterpret_cast<J9Class *>(method()->getClassFromConstantPool(comp(), classCpIndex));
+
+      // valueTypeClass will be NULL if it is unresolved.  Abort the compilation and
+      // track the failure with a static debug counter
+      if (j9class == NULL)
+         {
+         abortForUnresolvedValueTypeOp("putfield", "field");
+         }
+      else if (J9_IS_J9CLASS_FLATTENED(j9class))
+         {
+         // we are dealing with a flattened value type so emmit helper call
+         TR::Node* helperCall = TR::Node::createWithSymRef(TR::call, 2, 2, value, address, comp()->getSymRefTab()->findOrCreatePutFieldHelperSymbolRef());
+         genTreeTop(helperCall);
+         return;
+         }
+      }
 
    // code to handle volatiles moved to CodeGenPrep
    //
