@@ -28,7 +28,13 @@
 	</listeners>
 	<test name="ValueTypeTests">
 		<classes>
-			<class name="org.openj9.test.lworld.ValueTypeTests" />
+			<class name="org.openj9.test.lworld.ValueTypeTests">
+                 <methods>
+                    <!--<include name="testCyclicalStaticFieldDefaultValues1" />
+                    <include name="testCyclicalStaticFieldDefaultValues2" />
+                    <include name="testCyclicalStaticFieldDefaultValues3" />-->
+                </methods>
+                </class>
 		</classes>
 	</test>
 </suite> <!-- Suite -->
