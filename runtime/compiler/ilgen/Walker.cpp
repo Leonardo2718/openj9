@@ -5092,6 +5092,7 @@ TR_J9ByteCodeIlGenerator::loadInstance(TR::SymbolReference * symRef)
       {
       const int32_t classCpIndex = method()->classCPIndexOfFieldOrStatic(symRef->getCPIndex());
       auto* j9class = reinterpret_cast<J9Class *>(method()->getClassFromConstantPool(comp(), classCpIndex));
+      J9JavaVM *vm = comp()->fej9()->getJ9JITConfig()->javaVM;
 
       // valueTypeClass will be NULL if it is unresolved.  Abort the compilation and
       // track the failure with a static debug counter
@@ -5099,11 +5100,23 @@ TR_J9ByteCodeIlGenerator::loadInstance(TR::SymbolReference * symRef)
          {
          abortForUnresolvedValueTypeOp("getfield", "field");
          }
-      else if (J9_IS_J9CLASS_FLATTENED(j9class))
+      //else if (J9_IS_J9CLASS_FLATTENED(j9class))
+      else //if (vm->internalVMFunctions->isFlattenableFieldFlattened((J9Class *)method()->classOfMethod(), field->shape))
          {
+         abortForUnresolvedValueTypeOp("getfield", "field");
          // we are dealing with a flattened value type so emmit helper call
-         TR::Node* helperCall = TR::Node::createWithSymRef(TR::call, 2, 2, value, address, comp()->getSymRefTab()->findOrCreateGetFieldHelperSymbolRef());
-         genTreeTop(helperCall);
+         if (!address->isNonNull())
+            {
+            auto* nullchk = TR::Node::create(TR::PassThrough, 1, address);
+            nullchk = genNullCheck(nullchk);
+            genTreeTop(nullchk);
+            }
+         auto* j9ResolvedMethod = static_cast<TR_ResolvedJ9Method *>(_methodSymbol->getResolvedMethod());
+         auto* ramFieldRef = reinterpret_cast<J9RAMFieldRef*>(j9ResolvedMethod->cp()) + symRef->getCPIndex();
+         auto* ramFieldRefNode = TR::Node::aconst(reinterpret_cast<uintptr_t>(ramFieldRef));
+         auto* helperCallNode = TR::Node::createWithSymRef(TR::call, 2, 2, ramFieldRefNode, address, comp()->getSymRefTab()->findOrCreateGetFlattenableFieldSymbolRef());
+         handleSideEffect(helperCallNode);
+         genTreeTop(helperCallNode);
          return;
          }
       }
@@ -5914,25 +5927,26 @@ TR_J9ByteCodeIlGenerator::loadArrayElement(TR::DataType dataType, TR::ILOpCodes 
    TR::Node * arrayBaseAddress = pop();
    TR::Node * elementAddress = pop();
 
-   if (dataType == TR::Address && TR::Compiler->om.areValueTypesEnabled())
-      {
-      const int32_t classCpIndex = method()->classCPIndexOfFieldOrStatic(cpIndex);
-      auto* j9class = reinterpret_cast<J9Class *>(method()->getClassFromConstantPool(comp(), classCpIndex));
+   // if (dataType == TR::Address && TR::Compiler->om.areValueTypesEnabled())
+   //    {
+   //    const int32_t classCpIndex = method()->classCPIndexOfFieldOrStatic(cpIndex);
+   //    auto* j9class = reinterpret_cast<J9Class *>(method()->getClassFromConstantPool(comp(), classCpIndex));
 
-      // valueTypeClass will be NULL if it is unresolved.  Abort the compilation and
-      // track the failure with a static debug counter
-      if (j9class == NULL)
-         {
-         abortForUnresolvedValueTypeOp("aastore", "field");
-         }
-      else if (J9_IS_J9CLASS_FLATTENED(j9class))
-         {
-         // we are dealing with a flattened value type so emmit helper call
-         TR::Node* helperCall = TR::Node::createWithSymRef(TR::call, 2, 2, value, address, comp()->getSymRefTab()->findOrCreateAaStoreHelperSymbolRef());
-         genTreeTop(helperCall);
-         return;
-         }
-      }
+   //    // valueTypeClass will be NULL if it is unresolved.  Abort the compilation and
+   //    // track the failure with a static debug counter
+   //    if (j9class == NULL)
+   //       {
+   //       abortForUnresolvedValueTypeOp("aastore", "field");
+   //       }
+   //    else if (J9_IS_J9CLASS_FLATTENED(j9class))
+   //       {
+   //       abortForUnresolvedValueTypeOp("getfield", "flattenedField");
+   //       // we are dealing with a flattened value type so emmit helper call
+   //       // TR::Node* helperCall = TR::Node::createWithSymRef(TR::call, 2, 2, value, address, comp()->getSymRefTab()->findOrCreateAaStoreHelperSymbolRef());
+   //       // genTreeTop(helperCall);
+   //       // return;
+   //       }
+   //    }
 
    TR::Node *element = NULL;
    TR::SymbolReference * elementSymRef = symRefTab()->findOrCreateArrayShadowSymbolRef(dataType, arrayBaseAddress);
@@ -6206,13 +6220,14 @@ TR_J9ByteCodeIlGenerator::genWithField(uint16_t fieldCpIndex)
    TR::Node *newFieldValue = pop();
    TR::Node *originalObject = pop();
 
-   if (J9_IS_J9CLASS_FLATTENED(valueClass))
-      {
-      // we are dealing with a flattened value type so emmit helper call
-      TR::Node* helperCall = TR::Node::createWithSymRef(TR::call, 2, 2, originalObject, newFieldValue, comp()->getSymRefTab()->findOrCreateWithFieldHelperSymbolRef());
-      genTreeTop(helperCall);
-      return;
-      }
+   // if (J9_IS_J9CLASS_FLATTENED(valueClass))
+   //    {
+   //       abortForUnresolvedValueTypeOp("getfield", "flattenedField");
+   //    // we are dealing with a flattened value type so emmit helper call
+   //    // TR::Node* helperCall = TR::Node::createWithSymRef(TR::call, 2, 2, originalObject, newFieldValue, comp()->getSymRefTab()->findOrCreateWithFieldHelperSymbolRef());
+   //    // genTreeTop(helperCall);
+   //    // return;
+   //    }
 
    /*
     * Insert nullchk for the original object as requested by the JVM spec.
@@ -6717,25 +6732,26 @@ TR_J9ByteCodeIlGenerator::storeInstance(int32_t cpIndex)
    TR::Node * addressNode  = address;
    TR::Node * parentObject = address;
 
-   if (TR::Compiler->om.areValueTypesEnabled())
-      {
-      const int32_t classCpIndex = method()->classCPIndexOfFieldOrStatic(cpIndex;
-      auto* j9class = reinterpret_cast<J9Class *>(method()->getClassFromConstantPool(comp(), classCpIndex));
+   // if (TR::Compiler->om.areValueTypesEnabled())
+   //    {
+   //    const int32_t classCpIndex = method()->classCPIndexOfFieldOrStatic(cpIndex);
+   //    auto* j9class = reinterpret_cast<J9Class *>(method()->getClassFromConstantPool(comp(), classCpIndex));
 
-      // valueTypeClass will be NULL if it is unresolved.  Abort the compilation and
-      // track the failure with a static debug counter
-      if (j9class == NULL)
-         {
-         abortForUnresolvedValueTypeOp("putfield", "field");
-         }
-      else if (J9_IS_J9CLASS_FLATTENED(j9class))
-         {
-         // we are dealing with a flattened value type so emmit helper call
-         TR::Node* helperCall = TR::Node::createWithSymRef(TR::call, 2, 2, value, address, comp()->getSymRefTab()->findOrCreatePutFieldHelperSymbolRef());
-         genTreeTop(helperCall);
-         return;
-         }
-      }
+   //    // valueTypeClass will be NULL if it is unresolved.  Abort the compilation and
+   //    // track the failure with a static debug counter
+   //    if (j9class == NULL)
+   //       {
+   //       abortForUnresolvedValueTypeOp("putfield", "field");
+   //       }
+   //    else if (J9_IS_J9CLASS_FLATTENED(j9class))
+   //       {
+   //       abortForUnresolvedValueTypeOp("getfield", "flattenedField");
+   //       // we are dealing with a flattened value type so emmit helper call
+   //       // TR::Node* helperCall = TR::Node::createWithSymRef(TR::call, 2, 2, value, address, comp()->getSymRefTab()->findOrCreatePutFieldHelperSymbolRef());
+   //       // genTreeTop(helperCall);
+   //       // return;
+   //       }
+   //    }
 
    // code to handle volatiles moved to CodeGenPrep
    //
