@@ -2223,6 +2223,8 @@ public class ValueTypeTests {
 		MethodHandle getB = generateGenericGetter(nestBClass, "b");
 		
 		assertNotNull(getC.invoke(containerC));
+		Object temp = getC.invoke(containerC);
+		checkObject(temp); //this will genenrate a core
 		assertNotNull(getA.invoke(getC.invoke(containerC)));
 		assertNotNull(getB.invoke(getC.invoke(containerC)));
 		
