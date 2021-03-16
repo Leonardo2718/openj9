@@ -379,13 +379,6 @@ TR::TreeLowering::fastpathAcmpHelper(TR::Node * const node, TR::TreeTop * const 
    prevBlock->append(TR::TreeTop::create(comp, checkLhsNull));
    cfg->addEdge(prevBlock, targetBlock);
 
-   // create block to check if rhs is null
-   prevBlock = callBlock;
-   callBlock = callBlock->split(tt, cfg);
-   callBlock->setIsExtensionOfPreviousBlock(true);
-   if (trace())
-      traceMsg(comp, "Call node n%dn is now in block_%d (prevBlock is %d)\n", node->getGlobalIndex(), callBlock->getNumber(), prevBlock->getNumber());
-
    // insert acmpeq to check if lhs is null
    auto* const checkRhsNull = TR::Node::copy(checkLhsNull);
    checkRhsNull->setAndIncChild(0, anchoredCallArg2TT->getNode()->getFirstChild()); // replace lhs with rhs
@@ -397,15 +390,14 @@ TR::TreeLowering::fastpathAcmpHelper(TR::Node * const node, TR::TreeTop * const 
       checkRhsNull->setChild(2, regDeps);
       }
 
-   prevBlock->append(TR::TreeTop::create(comp, checkRhsNull));
-   cfg->addEdge(prevBlock, targetBlock);
-
-   // create block to check if lhs is VT
+   // create block to check if rhs is null
    prevBlock = callBlock;
    callBlock = callBlock->split(tt, cfg);
    callBlock->setIsExtensionOfPreviousBlock(true);
    if (trace())
       traceMsg(comp, "Call node n%dn is now in block_%d (prevBlock is %d)\n", node->getGlobalIndex(), callBlock->getNumber(), prevBlock->getNumber());
+   prevBlock->append(TR::TreeTop::create(comp, checkRhsNull));
+   cfg->addEdge(prevBlock, targetBlock);
 
    // create the ificmpeq node that checks classFlags for lhs
    auto* const vftSymRef = comp->getSymRefTab()->findOrCreateVftSymbolRef();
@@ -425,15 +417,14 @@ TR::TreeLowering::fastpathAcmpHelper(TR::Node * const node, TR::TreeTop * const 
       checkLhsIsVT->addChildren(&regDeps, 1);
       }
 
-   prevBlock->append(TR::TreeTop::create(comp, checkLhsIsVT));
-   cfg->addEdge(prevBlock, targetBlock);
-
-   // create block to check if rhs is VT
+   // create block to check if lhs is VT
    prevBlock = callBlock;
    callBlock = callBlock->split(tt, cfg);
    callBlock->setIsExtensionOfPreviousBlock(true);
    if (trace())
       traceMsg(comp, "Call node n%dn is now in block_%d (prevBlock is %d)\n", node->getGlobalIndex(), callBlock->getNumber(), prevBlock->getNumber());
+   prevBlock->append(TR::TreeTop::create(comp, checkLhsIsVT));
+   cfg->addEdge(prevBlock, targetBlock);
 
    // create the ificmpeq node that checks classFlags for rhs
    auto* const arg2Vft = TR::Node::createWithSymRef(node, TR::aloadi, 1, anchoredCallArg2TT->getNode()->getFirstChild(), vftSymRef);
@@ -449,6 +440,12 @@ TR::TreeLowering::fastpathAcmpHelper(TR::Node * const node, TR::TreeTop * const 
       checkRhsIsVT->addChildren(&regDeps, 1);
       }
 
+   // create block to check if rhs is VT
+   prevBlock = callBlock;
+   callBlock = callBlock->split(tt, cfg);
+   callBlock->setIsExtensionOfPreviousBlock(true);
+   if (trace())
+      traceMsg(comp, "Call node n%dn is now in block_%d (prevBlock is %d)\n", node->getGlobalIndex(), callBlock->getNumber(), prevBlock->getNumber());
    prevBlock->append(TR::TreeTop::create(comp, checkRhsIsVT));
    cfg->addEdge(prevBlock, targetBlock);
    }
