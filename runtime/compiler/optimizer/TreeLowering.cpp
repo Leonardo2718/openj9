@@ -315,12 +315,18 @@ TR::TreeLowering::fastpathAcmpHelper(TR::Node * const node, TR::TreeTop * const 
       traceMsg(comp, "Anchored call has been transformed into %s node n%dn\n", anchoredNode->getOpCode().getName(), anchoredNode->getGlobalIndex());
    auto* const1Node = TR::Node::iconst(1);
    TR::Node* storeNode = NULL;
+   TR::Node* regDepForStoreNode = NULL;
    if (anchoredNode->getOpCodeValue() == TR::iRegLoad)
       {
       if (trace())
          traceMsg(comp, "Storing constant 1 in register %s\n", comp->getDebug()->getGlobalRegisterName(anchoredNode->getGlobalRegisterNumber()));
+      auto const globalRegNum = anchoredNode->getGlobalRegisterNumber();
       storeNode = TR::Node::create(TR::iRegStore, 1, const1Node);
-      storeNode->setGlobalRegisterNumber(anchoredNode->getGlobalRegisterNumber());
+      storeNode->setGlobalRegisterNumber(globalRegNum);
+      // since the result is in a global register, we're going to need a PassThrough
+      // on the exit point GlRegDeps
+      regDepForStoreNode = TR::Node::create(TR::PassThrough, 1, const1Node);
+      regDepForStoreNode->setGlobalRegisterNumber(globalRegNum);
       }
    else if (anchoredNode->getOpCodeValue() == TR::iload)
       {
@@ -342,15 +348,7 @@ TR::TreeLowering::fastpathAcmpHelper(TR::Node * const node, TR::TreeTop * const 
       {
       TR::Node* sourceDeps = callBlock->getExit()->getNode()->getFirstChild();
       TR::Node* glRegDeps = TR::Node::create(TR::GlRegDeps, sourceDeps->getNumChildren());
-      TR::Node* depNode = NULL;
-
-      if (anchoredNode->getOpCodeValue() == TR::iRegLoad)
-         {
-         depNode = TR::Node::create(TR::PassThrough, 1, storeNode->getChild(0));
-         depNode->setGlobalRegisterNumber(storeNode->getGlobalRegisterNumber());
-         }
-
-      copyExitRegDepsAndSubstitue(glRegDeps, sourceDeps, depNode);
+      copyExitRegDepsAndSubstitue(glRegDeps, sourceDeps, regDepForStoreNode);
       ifacmpeqNode->addChildren(&glRegDeps, 1);
       }
 
@@ -364,6 +362,12 @@ TR::TreeLowering::fastpathAcmpHelper(TR::Node * const node, TR::TreeTop * const 
    storeNode = storeNode->duplicateTree(true);
    storeNode->getFirstChild()->setInt(0);
    tt->insertBefore(TR::TreeTop::create(comp, storeNode));
+   if (regDepForStoreNode != NULL)
+      {
+      regDepForStoreNode = TR::Node::copy(regDepForStoreNode);
+      regDepForStoreNode->setReferenceCount(0);
+      regDepForStoreNode->setAndIncChild(0, storeNode->getFirstChild());
+      }
 
    // insert acmpeq to check if lhs is null
    auto* const nullConst = TR::Node::aconst(0);
@@ -372,15 +376,7 @@ TR::TreeLowering::fastpathAcmpHelper(TR::Node * const node, TR::TreeTop * const 
       {
       TR::Node* sourceDeps = ifacmpeqNode->getChild(2);
       TR::Node* glRegDeps = TR::Node::create(TR::GlRegDeps, sourceDeps->getNumChildren());
-      TR::Node* depNode = NULL;
-
-      if (anchoredNode->getOpCodeValue() == TR::iRegLoad)
-         {
-         depNode = TR::Node::create(TR::PassThrough, 1, storeNode->getChild(0));
-         depNode->setGlobalRegisterNumber(storeNode->getGlobalRegisterNumber());
-         }
-
-      copyExitRegDepsAndSubstitue(glRegDeps, sourceDeps, depNode);
+      copyExitRegDepsAndSubstitue(glRegDeps, sourceDeps, regDepForStoreNode);
       checkLhsNull->addChildren(&glRegDeps, 1);
       }
    callBlock = insertFastpath(callBlock, tt, checkLhsNull);
