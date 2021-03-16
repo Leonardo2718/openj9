@@ -399,6 +399,58 @@ TR::TreeLowering::fastpathAcmpHelper(TR::Node * const node, TR::TreeTop * const 
 
    prevBlock->append(TR::TreeTop::create(comp, checkRhsNull));
    cfg->addEdge(prevBlock, targetBlock);
+
+   // create block to check if lhs is VT
+   prevBlock = callBlock;
+   callBlock = callBlock->split(tt, cfg);
+   callBlock->setIsExtensionOfPreviousBlock(true);
+   if (trace())
+      traceMsg(comp, "Call node n%dn is now in block_%d (prevBlock is %d)\n", node->getGlobalIndex(), callBlock->getNumber(), prevBlock->getNumber());
+
+   // create the ificmpeq node that checks classFlags for lhs
+   auto* const vftSymRef = comp->getSymRefTab()->findOrCreateVftSymbolRef();
+   auto* const classFlagsSymRef = comp->getSymRefTab()->findOrCreateClassFlagsSymbolRef();
+
+   auto* const j9ClassIsVTFlag = TR::Node::iconst(node, J9ClassIsValueType);
+   auto* const arg1Vft = TR::Node::createWithSymRef(node, TR::aloadi, 1, anchoredCallArg1TT->getNode()->getFirstChild(), vftSymRef);
+   auto* const arg1ClassFlags = TR::Node::createWithSymRef(node, TR::iloadi, 1, arg1Vft, classFlagsSymRef);
+   auto* const isArg1ValueType = TR::Node::create(node, TR::iand, 2, arg1ClassFlags, j9ClassIsVTFlag);
+
+   // insert acmpeq for fast path when lhs is not a value type
+   auto* const checkLhsIsVT = TR::Node::createif(TR::ificmpeq, isArg1ValueType, storeNode->getFirstChild(), targetBlock->getEntry());
+   if (checkLhsNull->getNumChildren() == 3)
+      {
+      TR::Node* regDeps = TR::Node::create(TR::GlRegDeps, checkLhsNull->getChild(2)->getNumChildren());
+      copyExitRegDepsAndSubstitue(regDeps, checkLhsNull->getChild(2), NULL);
+      checkLhsIsVT->addChildren(&regDeps, 1);
+      }
+
+   prevBlock->append(TR::TreeTop::create(comp, checkLhsIsVT));
+   cfg->addEdge(prevBlock, targetBlock);
+
+   // create block to check if rhs is VT
+   prevBlock = callBlock;
+   callBlock = callBlock->split(tt, cfg);
+   callBlock->setIsExtensionOfPreviousBlock(true);
+   if (trace())
+      traceMsg(comp, "Call node n%dn is now in block_%d (prevBlock is %d)\n", node->getGlobalIndex(), callBlock->getNumber(), prevBlock->getNumber());
+
+   // create the ificmpeq node that checks classFlags for rhs
+   auto* const arg2Vft = TR::Node::createWithSymRef(node, TR::aloadi, 1, anchoredCallArg2TT->getNode()->getFirstChild(), vftSymRef);
+   auto* const arg2ClassFlags = TR::Node::createWithSymRef(node, TR::iloadi, 1, arg2Vft, classFlagsSymRef);
+   auto* const isArg2ValueType = TR::Node::create(node, TR::iand, 2, arg2ClassFlags, j9ClassIsVTFlag);
+
+   // insert acmpeq for fast path when rhs is not a value type
+   auto* const checkRhsIsVT = TR::Node::createif(TR::ificmpeq, isArg2ValueType, storeNode->getFirstChild(), targetBlock->getEntry());
+   if (checkLhsNull->getNumChildren() == 3)
+      {
+      TR::Node* regDeps = TR::Node::create(TR::GlRegDeps, checkLhsNull->getChild(2)->getNumChildren());
+      copyExitRegDepsAndSubstitue(regDeps, checkLhsNull->getChild(2), NULL);
+      checkRhsIsVT->addChildren(&regDeps, 1);
+      }
+
+   prevBlock->append(TR::TreeTop::create(comp, checkRhsIsVT));
+   cfg->addEdge(prevBlock, targetBlock);
    }
 
 /**
