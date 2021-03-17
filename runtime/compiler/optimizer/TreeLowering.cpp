@@ -249,17 +249,17 @@ TR::TreeLowering::fastpathAcmpHelper(TR::Node * const node, TR::TreeTop * const 
 
    // put non-helper call in its own block by block splitting at the
    // next treetop and then at the current one
-   TR::Block* prevBlock = tt->getEnclosingBlock();
-   TR::Block* targetBlock = prevBlock->splitPostGRA(tt->getNextTreeTop(), cfg, true, NULL);
+   TR::Block* callBlock = tt->getEnclosingBlock();
+   TR::Block* targetBlock = callBlock->splitPostGRA(tt->getNextTreeTop(), cfg, true, NULL);
    if (trace())
-      traceMsg(comp, "prevBlock is %d, targetBlock is %d\n", prevBlock->getNumber(), targetBlock->getNumber());
+      traceMsg(comp, "Call node n%un is in block %d, targetBlock is %d\n", node->getGlobalIndex(), callBlock->getNumber(), targetBlock->getNumber());
 
    // As the block is split after the helper call node, it is possible that as part of un-commoning
    // code to store nodes into registers or temp-slots is appended to the original block by the call
    // to splitPostGRA above.  Move the acmp helper call treetop to the end of prevBlock, along with
    // any stores resulting from un-commoning of the nodes in the helper call tree so that it can be
    // split into its own call block.
-   TR::TreeTop* prevBlockExit = prevBlock->getExit();
+   TR::TreeTop* prevBlockExit = callBlock->getExit();
    TR::TreeTop* iterTT = tt->getNextTreeTop();
 
    if (iterTT != prevBlockExit)
@@ -301,11 +301,6 @@ TR::TreeLowering::fastpathAcmpHelper(TR::Node * const node, TR::TreeTop * const 
       lastTTForCallBlock->join(prevBlockExit);
       }
 
-   TR::Block* callBlock = prevBlock->split(tt, cfg);
-   callBlock->setIsExtensionOfPreviousBlock(true);
-   if (trace())
-      traceMsg(comp, "Isolated call node n%dn in block_%d\n", node->getGlobalIndex(), callBlock->getNumber());
-
    // insert store of constant 1
    // the value must go wherever the value returned by the helper call goes
    // so that the code in the target block picks up the constant if we fast-path
@@ -337,7 +332,7 @@ TR::TreeLowering::fastpathAcmpHelper(TR::Node * const node, TR::TreeTop * const 
       }
    else
       TR_ASSERT_FATAL_WITH_NODE(anchoredNode, false, "Anchored call has been turned into unexpected opcode\n");
-   prevBlock->append(TR::TreeTop::create(comp, storeNode));
+   tt->insertBefore(TR::TreeTop::create(comp, storeNode));
 
    // insert acmpeq for fastpath, taking care to set the proper register dependencies
    // Any register dependencies added by splitPostGRA will now be on the BBExit for
@@ -351,11 +346,7 @@ TR::TreeLowering::fastpathAcmpHelper(TR::Node * const node, TR::TreeTop * const 
       copyExitRegDepsAndSubstitue(glRegDeps, sourceDeps, regDepForStoreNode);
       ifacmpeqNode->addChildren(&glRegDeps, 1);
       }
-
-   if (trace())
-      traceMsg(comp, "Inserting first fast-path check node n%dn\n", ifacmpeqNode->getGlobalIndex());
-   prevBlock->append(TR::TreeTop::create(comp, ifacmpeqNode));
-   cfg->addEdge(prevBlock, targetBlock);
+   callBlock = insertFastpath(callBlock, tt, ifacmpeqNode);
 
    // duplicate the store node and put 0 (false), because if the lhs is null
    // the comparison must return false
