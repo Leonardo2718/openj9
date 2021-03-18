@@ -273,6 +273,8 @@ TR::TreeLowering::fastpathAcmpHelper(TR::Node * const node, TR::TreeTop * const 
    TR::CFG* cfg = comp->getFlowGraph();
    cfg->invalidateStructure();
 
+   if (!performTransformation(comp, "%sPreparing for post-GRA block split by anchoring helper call and arguments\n", optDetailString())) return;
+
    // anchor call node after split point to ensure the returned value goes into
    // either a temp or a global register
    auto* const anchoredCallTT = TR::TreeTop::create(comp, tt, TR::Node::create(TR::treetop, 1, node));
@@ -293,6 +295,7 @@ TR::TreeLowering::fastpathAcmpHelper(TR::Node * const node, TR::TreeTop * const 
    // put non-helper call in its own block by block splitting at the
    // next treetop and then at the current one
    TR::Block* callBlock = tt->getEnclosingBlock();
+   if (!performTransformation(comp, "%sSplitting block_%d at TreeTop [0x%p], which holds helper call node n%un\n", optDetailString(), callBlock->getNumber(), tt, node->getGlobalIndex())) return;
    TR::Block* targetBlock = callBlock->splitPostGRA(tt->getNextTreeTop(), cfg, true, NULL);
    if (trace())
       traceMsg(comp, "Call node n%un is in block %d, targetBlock is %d\n", node->getGlobalIndex(), callBlock->getNumber(), targetBlock->getNumber());
@@ -303,6 +306,8 @@ TR::TreeLowering::fastpathAcmpHelper(TR::Node * const node, TR::TreeTop * const 
    // any stores resulting from un-commoning of the nodes in the helper call tree so that it can be
    // split into its own call block.
    moveNodeToEndOfBlock(callBlock, tt, node);
+
+   if (!performTransformation(comp, "%sInserting fastpath for lhs == rhs\n", optDetailString())) return;
 
    // insert store of constant 1
    // the value must go wherever the value returned by the helper call goes
@@ -352,6 +357,8 @@ TR::TreeLowering::fastpathAcmpHelper(TR::Node * const node, TR::TreeTop * const 
    tt->insertBefore(TR::TreeTop::create(comp, ifacmpeqNode));
    callBlock = splitForFastpath(callBlock, tt, targetBlock);
 
+   if (!performTransformation(comp, "%sInserting fastpath for lhs == NULL\n", optDetailString())) return;
+
    // duplicate the store node and put 0 (false), because if the lhs is null
    // the comparison must return false
    storeNode = storeNode->duplicateTree(true);
@@ -377,6 +384,8 @@ TR::TreeLowering::fastpathAcmpHelper(TR::Node * const node, TR::TreeTop * const 
    tt->insertBefore(TR::TreeTop::create(comp, checkLhsNull));
    callBlock = splitForFastpath(callBlock, tt, targetBlock);
 
+   if (!performTransformation(comp, "%sInserting fastpath for rhs == NULL\n", optDetailString())) return;
+
    // insert acmpeq to check if lhs is null
    auto* const checkRhsNull = TR::Node::copy(checkLhsNull);
    checkRhsNull->setAndIncChild(0, anchoredCallArg2TT->getNode()->getFirstChild()); // replace lhs with rhs
@@ -389,6 +398,8 @@ TR::TreeLowering::fastpathAcmpHelper(TR::Node * const node, TR::TreeTop * const 
       }
    tt->insertBefore(TR::TreeTop::create(comp, checkRhsNull));
    callBlock = splitForFastpath(callBlock, tt, targetBlock);
+
+   if (!performTransformation(comp, "%sInserting fastpath for lhs is VT\n", optDetailString())) return;
 
    // create the ificmpeq node that checks classFlags for lhs
    auto* const vftSymRef = comp->getSymRefTab()->findOrCreateVftSymbolRef();
@@ -408,6 +419,8 @@ TR::TreeLowering::fastpathAcmpHelper(TR::Node * const node, TR::TreeTop * const 
       }
    tt->insertBefore(TR::TreeTop::create(comp, checkLhsIsVT));
    callBlock = splitForFastpath(callBlock, tt, targetBlock);
+
+   if (!performTransformation(comp, "%sInserting fastpath for rhs is VT\n", optDetailString())) return;
 
    // create the ificmpeq node that checks classFlags for rhs
    auto* const arg2Vft = TR::Node::createWithSymRef(node, TR::aloadi, 1, anchoredCallArg2TT->getNode()->getFirstChild(), vftSymRef);
