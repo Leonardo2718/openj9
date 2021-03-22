@@ -160,11 +160,22 @@ copyExitRegDepsAndSubstitue(TR::Node* const targetNode, TR::Node* const sourceNo
       }
    }
 
-TR::Block*
-splitForFastpath(TR::Block* const block, TR::TreeTop* const splitPoint, TR::Block* const targetBlock)
+void
+copyBranchGlRegDepChildAndSubstitute(TR::Node* const targetBranchNode, TR::Node* const sourceBranchNode, TR::Node* const substituteNode)
    {
-   // TR::CFG* const cfg = self()->comp()->getFlowGraph();
-   TR::CFG* const cfg = TR::comp()->getFlowGraph();
+   if (sourceBranchNode->getNumChildren() == 3)
+      {
+      TR::Node* sourceDeps = sourceBranchNode->getChild(2);
+      TR::Node* glRegDeps = TR::Node::create(TR::GlRegDeps, sourceDeps->getNumChildren());
+      copyExitRegDepsAndSubstitue(glRegDeps, sourceDeps, substituteNode);
+      targetBranchNode->addChildren(&glRegDeps, 1);
+      }
+   }
+
+TR::Block*
+TR::TreeLowering::splitForFastpath(TR::Block* const block, TR::TreeTop* const splitPoint, TR::Block* const targetBlock)
+   {
+   TR::CFG* const cfg = self()->comp()->getFlowGraph();
    TR::Block* const newBlock = block->split(splitPoint, cfg);
    newBlock->setIsExtensionOfPreviousBlock(true);
    cfg->addEdge(block, targetBlock);
