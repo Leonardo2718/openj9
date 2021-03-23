@@ -389,7 +389,9 @@ TR::TreeLowering::fastpathAcmpHelper(TR::Node * const node, TR::TreeTop * const 
    tt->insertBefore(TR::TreeTop::create(comp, storeNode));
 
    // If the BBExit of the block containing the call has a GlRegDeps node,
-   // a matching GlRegDeps node will have to be added to all the checks.
+   // a matching GlRegDeps node will be needed for all the branches. The
+   // fallthrough of the call block and the branch targets will be the
+   // same block. So, all register dependencies will be mostly the same.
    // `exitGlRegDeps` is intended to point to the "reference" node used to
    // create the GlRegDeps for each consecutive branch.
    TR::Node* exitGlRegDeps = NULL;
@@ -398,11 +400,9 @@ TR::TreeLowering::fastpathAcmpHelper(TR::Node * const node, TR::TreeTop * const 
       exitGlRegDeps = callBlock->getExit()->getNode()->getFirstChild();
       }
 
-   // Insert acmpeq for fastpath, taking care to set the proper register dependencies.
-   // Any register dependencies added by splitPostGRA will now be on the BBExit of the block
-   // containing the call. The target (fallthrough) of the call block and the target of the
-   // ifacmpeq must be the same block, so copy the GlRegDeps from the end of the call block
-   // to the ifacmpeq, if needed.
+   // Insert fastpath for lhs == rhs (reference comparison), taking care to set the
+   // proper register dependencies by copying them from the BBExit of the call block
+   // (through `exitGlRegDeps`) when needed.
    auto* ifacmpeqNode = TR::Node::createif(TR::ifacmpeq, anchoredCallArg1TT->getNode()->getFirstChild(), anchoredCallArg2TT->getNode()->getFirstChild(), targetBlock->getEntry());
    exitGlRegDeps = copyBranchGlRegDepsAndSubstitute(ifacmpeqNode, exitGlRegDeps, regDepForStoreNode);
    tt->insertBefore(TR::TreeTop::create(comp, ifacmpeqNode));
@@ -436,7 +436,7 @@ TR::TreeLowering::fastpathAcmpHelper(TR::Node * const node, TR::TreeTop * const 
    auto* const checkRhsNull = TR::Node::copy(checkLhsNull);
    checkRhsNull->setAndIncChild(0, anchoredCallArg2TT->getNode()->getFirstChild()); // replace lhs with rhs
    checkRhsNull->getChild(1)->incReferenceCount();
-   copyBranchGlRegDepsAndSubstitute(checkRhsNull, exitGlRegDeps, NULL);
+   copyBranchGlRegDepsAndSubstitute(checkRhsNull, exitGlRegDeps, NULL); // reg deps don't change so no need to update exitGlRegDeps
    tt->insertBefore(TR::TreeTop::create(comp, checkRhsNull));
    callBlock = splitForFastpath(callBlock, tt, targetBlock);
 
