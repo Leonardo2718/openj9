@@ -160,16 +160,17 @@ copyExitRegDepsAndSubstitue(TR::Node* const targetNode, TR::Node* const sourceNo
       }
    }
 
-void
-copyBranchGlRegDepChildAndSubstitute(TR::Node* const targetBranchNode, TR::Node* const sourceBranchNode, TR::Node* const substituteNode)
+TR::Node* 
+copyBranchGlRegDepsAndSubstitute(TR::Node* const branchNode, TR::Node* const sourceGlRegDepsNode, TR::Node* const substituteNode)
    {
-   if (sourceBranchNode->getNumChildren() == 3)
+   TR::Node* glRegDepsCopy = NULL;
+   if (sourceGlRegDepsNode != NULL)
       {
-      TR::Node* sourceDeps = sourceBranchNode->getChild(2);
-      TR::Node* glRegDeps = TR::Node::create(TR::GlRegDeps, sourceDeps->getNumChildren());
-      copyExitRegDepsAndSubstitue(glRegDeps, sourceDeps, substituteNode);
-      targetBranchNode->addChildren(&glRegDeps, 1);
+      glRegDepsCopy = TR::Node::create(TR::GlRegDeps, sourceGlRegDepsNode->getNumChildren());
+      copyExitRegDepsAndSubstitue(glRegDepsCopy, sourceGlRegDepsNode, substituteNode);
+      branchNode->addChildren(&glRegDepsCopy, 1);
       }
+   return glRegDepsCopy;
    }
 
 TR::Block*
@@ -384,18 +385,28 @@ TR::TreeLowering::fastpathAcmpHelper(TR::Node * const node, TR::TreeTop * const 
       TR_ASSERT_FATAL_WITH_NODE(anchoredNode, false, "Anchored call has been turned into unexpected opcode\n");
    tt->insertBefore(TR::TreeTop::create(comp, storeNode));
 
+   // If the BBExit of the block containing the call has a GlRegDeps node,
+   // a matching GlRegDeps node will have to be added to all the checks.
+   // `exitGlRegDeps` is intended to point to the "reference" node used to
+   // create the GlRegDeps for each consecutive branch.
+   TR::Node* exitGlRegDeps = NULL;
+   if (callBlock->getExit()->getNode()->getNumChildren() > 0)
+      {
+      exitGlRegDeps = callBlock->getExit()->getNode()->getFirstChild();
+      }
+
    // Insert acmpeq for fastpath, taking care to set the proper register dependencies.
    // Any register dependencies added by splitPostGRA will now be on the BBExit of the block
    // containing the call. The target (fallthrough) of the call block and the target of the
    // ifacmpeq must be the same block, so copy the GlRegDeps from the end of the call block
    // to the ifacmpeq, if needed.
    auto* ifacmpeqNode = TR::Node::createif(TR::ifacmpeq, anchoredCallArg1TT->getNode()->getFirstChild(), anchoredCallArg2TT->getNode()->getFirstChild(), targetBlock->getEntry());
-   if (callBlock->getExit()->getNode()->getNumChildren() > 0)
+   if (exitGlRegDeps != NULL)
       {
-      TR::Node* sourceDeps = callBlock->getExit()->getNode()->getFirstChild();
-      TR::Node* glRegDeps = TR::Node::create(TR::GlRegDeps, sourceDeps->getNumChildren());
-      copyExitRegDepsAndSubstitue(glRegDeps, sourceDeps, regDepForStoreNode);
+      TR::Node* glRegDeps = TR::Node::create(TR::GlRegDeps, exitGlRegDeps->getNumChildren());
+      copyExitRegDepsAndSubstitue(glRegDeps, exitGlRegDeps, regDepForStoreNode);
       ifacmpeqNode->addChildren(&glRegDeps, 1);
+      exitGlRegDeps = glRegDeps;
       }
    tt->insertBefore(TR::TreeTop::create(comp, ifacmpeqNode));
    callBlock = splitForFastpath(callBlock, tt, targetBlock);
@@ -417,12 +428,12 @@ TR::TreeLowering::fastpathAcmpHelper(TR::Node * const node, TR::TreeTop * const 
    // Using a similar strategy as above, insert check for lhs == NULL.
    auto* const nullConst = TR::Node::aconst(0);
    auto* const checkLhsNull = TR::Node::createif(TR::ifacmpeq, anchoredCallArg1TT->getNode()->getFirstChild(), nullConst, targetBlock->getEntry());
-   if (ifacmpeqNode->getNumChildren() == 3)
+   if (exitGlRegDeps != NULL)
       {
-      TR::Node* sourceDeps = ifacmpeqNode->getChild(2);
-      TR::Node* glRegDeps = TR::Node::create(TR::GlRegDeps, sourceDeps->getNumChildren());
-      copyExitRegDepsAndSubstitue(glRegDeps, sourceDeps, regDepForStoreNode);
+      TR::Node* glRegDeps = TR::Node::create(TR::GlRegDeps, exitGlRegDeps->getNumChildren());
+      copyExitRegDepsAndSubstitue(glRegDeps, exitGlRegDeps, regDepForStoreNode);
       checkLhsNull->addChildren(&glRegDeps, 1);
+      exitGlRegDeps = glRegDeps;
       }
    tt->insertBefore(TR::TreeTop::create(comp, checkLhsNull));
    callBlock = splitForFastpath(callBlock, tt, targetBlock);
@@ -433,11 +444,11 @@ TR::TreeLowering::fastpathAcmpHelper(TR::Node * const node, TR::TreeTop * const 
    auto* const checkRhsNull = TR::Node::copy(checkLhsNull);
    checkRhsNull->setAndIncChild(0, anchoredCallArg2TT->getNode()->getFirstChild()); // replace lhs with rhs
    checkRhsNull->getChild(1)->incReferenceCount();
-   if (checkLhsNull->getNumChildren() == 3)
+   if (exitGlRegDeps != NULL)
       {
-      TR::Node* regDeps = TR::Node::copy(checkLhsNull->getChild(2));
-      copyExitRegDepsAndSubstitue(regDeps, checkLhsNull->getChild(2), NULL);
-      checkRhsNull->setChild(2, regDeps);
+      TR::Node* glRegDeps = TR::Node::copy(exitGlRegDeps);
+      copyExitRegDepsAndSubstitue(glRegDeps, exitGlRegDeps, NULL);
+      checkRhsNull->setChild(2, glRegDeps);
       }
    tt->insertBefore(TR::TreeTop::create(comp, checkRhsNull));
    callBlock = splitForFastpath(callBlock, tt, targetBlock);
@@ -453,11 +464,10 @@ TR::TreeLowering::fastpathAcmpHelper(TR::Node * const node, TR::TreeTop * const 
    auto* const lhsClassFlags = TR::Node::createWithSymRef(node, TR::iloadi, 1, lhsVft, classFlagsSymRef);
    auto* const isLhsValueType = TR::Node::create(node, TR::iand, 2, lhsClassFlags, j9ClassIsVTFlag);
    auto* const checkLhsIsVT = TR::Node::createif(TR::ificmpeq, isLhsValueType, storeNode->getFirstChild(), targetBlock->getEntry());
-   if (checkLhsNull->getNumChildren() == 3)
+   if (exitGlRegDeps != NULL)
       {
-      TR::Node* sourceDeps = checkLhsNull->getChild(2);
-      TR::Node* regDeps = TR::Node::create(TR::GlRegDeps, sourceDeps->getNumChildren());
-      copyExitRegDepsAndSubstitue(regDeps, sourceDeps, NULL);
+      TR::Node* regDeps = TR::Node::create(TR::GlRegDeps, exitGlRegDeps->getNumChildren());
+      copyExitRegDepsAndSubstitue(regDeps, exitGlRegDeps, NULL);
       checkLhsIsVT->addChildren(&regDeps, 1);
       }
    tt->insertBefore(TR::TreeTop::create(comp, checkLhsIsVT));
@@ -470,11 +480,10 @@ TR::TreeLowering::fastpathAcmpHelper(TR::Node * const node, TR::TreeTop * const 
    auto* const rhsClassFlags = TR::Node::createWithSymRef(node, TR::iloadi, 1, rhsVft, classFlagsSymRef);
    auto* const isRhsValueType = TR::Node::create(node, TR::iand, 2, rhsClassFlags, j9ClassIsVTFlag);
    auto* const checkRhsIsVT = TR::Node::createif(TR::ificmpeq, isRhsValueType, storeNode->getFirstChild(), targetBlock->getEntry());
-   if (checkLhsNull->getNumChildren() == 3)
+   if (exitGlRegDeps != NULL)
       {
-      TR::Node* sourceDeps = checkLhsNull->getChild(2);
-      TR::Node* regDeps = TR::Node::create(TR::GlRegDeps, sourceDeps->getNumChildren());
-      copyExitRegDepsAndSubstitue(regDeps, sourceDeps, NULL);
+      TR::Node* regDeps = TR::Node::create(TR::GlRegDeps, exitGlRegDeps->getNumChildren());
+      copyExitRegDepsAndSubstitue(regDeps, exitGlRegDeps, NULL);
       checkRhsIsVT->addChildren(&regDeps, 1);
       }
    tt->insertBefore(TR::TreeTop::create(comp, checkRhsIsVT));
