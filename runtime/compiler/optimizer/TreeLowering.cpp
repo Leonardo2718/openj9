@@ -211,63 +211,93 @@ TR::TreeLowering::splitForFastpath(TR::Block* const block, TR::TreeTop* const sp
  *
  *  ...becomes...
  *
- *  +----------------------+
- *  |ttprev                |
- *  |iRegStore x           |
- *  |  iconst 1            |
- *  |ifacmpeq  -->---------*---------+
- *  |  aload lhs           |         |
- *  |  aload rhs           |         |
- *  |  GlRegDeps           |         |
- *  |    PassThrough x     |         |
- *  |      ==> iconst 1    |         |
- *  |    PassThrough ...   |         |
- *  |BBEnd                 |         |
- *  +----------------------+         |
- *  |BBStart (extension)   |         |
- *  |iRegStore x           |         |
- *  |  iconst 0            |         |
- *  |ifacmpeq -->----------*---------+
- *  |  aload lhs           |         |
- *  |  aconst 0            |         |
- *  |  GlRegDeps           |         |
- *  |    PassThrough x     |         |
- *  |      ==> iconst 0    |         |
- *  |    PassThrough ...   |         |
- *  |BBEnd                 |         |
- *  +----------------------+         |
- *  |BBStart (extension)   |         |
- *  |ifacmpeq -->----------*---------+
- *  |  aload rhs           |         |
- *  |  aconst 0            |         |
- *  |  GlRegDeps           |         |
- *  |    PassThrough x     |         |
- *  |      ==> iconst 0    |         |
- *  |    PassThrough ...   |         |
- *  |BBEnd                 |         |
- *  +----------------------+         |
- *  |BBStart (extension)   |         |
- *  |iRegStore x           |         |
- *  |  icall acmpHelper    |         |
- *  |    aload lhs         |         |
- *  |    aload rhs         |         |
- *  |BBEnd                 |         |
- *  |  GlRegDeps           |         |
- *  |    PassThrough x     |         |
- *  |      ==> icall acmpHelper      |
- *  |    PassThrough ...   |         |
- *  +----------------------+         |
- *        |                          |
- *        +--------------------------+
- *        |
- *        v
- *  +-----------------+
- *  |BBStart
- *  |ificmpeq --> ... |
- *  |  iRegLoad x     |
- *  |  iconst 0       |
- *  |BBEnd            |
- *  +-----------------+
+ *
+ * +------------------------------+
+ * |ttprev                        |
+ * |iRegStore x                   |
+ * |  iconst 1                    |
+ * |ifacmpeq  +->---------------------------+
+ * |  aload lhs                   |         |
+ * |  aload rhs                   |         |
+ * |  GlRegDeps                   |         |
+ * |    PassThrough x             |         |
+ * |      ==> iconst 1            |         |
+ * |    PassThrough ...           |         |
+ * |BBEnd                         |         |
+ * +------------------------------+         |
+ * |BBStart (extension)           |         |
+ * |iRegStore x                   |         |
+ * |  iconst 0                    |         |
+ * |ifacmpeq +->----------------------------+
+ * |  aload lhs                   |         |
+ * |  aconst 0                    |         |
+ * |  GlRegDeps                   |         |
+ * |    PassThrough x             |         |
+ * |      ==> iconst 0            |         |
+ * |    PassThrough ...           |         |
+ * |BBEnd                         |         |
+ * +------------------------------+         |
+ * |BBStart (extension)           |         |
+ * |ifacmpeq +------------------------------+
+ * |  aload rhs                   |         |
+ * |  ==> aconst 0                |         |
+ * |  GlRegDeps                   |         |
+ * |    PassThrough x             |         |
+ * |      ==> iconst 0            |         |
+ * |    PassThrough ...           |         |
+ * |BBEnd                         |         |
+ * +------------------------------+         |
+ * |BBStart (extension)           |         |
+ * |ifacmpeq +->----------------------------+
+ * |  iand                        |         |
+ * |    iloadi ClassFlags         |         |
+ * |      aloadi J9Class          |         |
+ * |        aload lhs             |         |
+ * |    iconst J9ClassIsValueType |         |
+ * |  iconst 0                    |         |
+ * |  GlRegDeps                   |         |
+ * |    PassThrough x             |         |
+ * |      ==> iconst 0            |         |
+ * |    PassThrough ...           |         |
+ * |BBEnd                         |         |
+ * +------------------------------+         |
+ * |BBStart (extension)           |         |
+ * |ifacmpeq +->----------------------------+
+ * |  iand                        |         |
+ * |    iloadi ClassFlags         |         |
+ * |      aloadi J9Class          |         |
+ * |        aload rhs             |         |
+ * |    iconst J9ClassIsValueType |         |
+ * |  iconst 0                    |         |
+ * |  GlRegDeps                   |         |
+ * |    PassThrough x             |         |
+ * |      ==> iconst 0            |         |
+ * |    PassThrough ...           |         |
+ * |BBEnd                         |         |
+ * +------------------------------+         |
+ * |BBStart (extension)           |         |
+ * |iRegStore x                   |         |
+ * |  icall acmpHelper            |         |
+ * |    aload lhs                 |         |
+ * |    aload rhs                 |         |
+ * |BBEnd                         |         |
+ * |  GlRegDeps                   |         |
+ * |    PassThrough x             |         |
+ * |      ==> icall acmpHelper    |         |
+ * |    PassThrough ...           |         |
+ * +-----+------------------------+         |
+ *       |                                  |
+ *       +----------------------------------+
+ *       |
+ *       v
+ * +-----+-----------+
+ * |BBStart
+ * |ificmpeq +-> ... +
+ * |  iRegLoad x     |
+ * |  iconst 0       |
+ * |BBEnd            |
+ * +-----------------+
+ *
  *
  * Any GlRegDeps on the extension block are created by OMR::Block::splitPostGRA
  * while those on the ifacmpeq at the end of the first block are copies of those,
@@ -303,8 +333,8 @@ TR::TreeLowering::fastpathAcmpHelper(TR::Node * const node, TR::TreeTop * const 
          node->getFirstChild()->getGlobalIndex(), node->getSecondChild()->getGlobalIndex(), anchoredCallArg1TT->getNode()->getGlobalIndex(), anchoredCallArg2TT->getNode()->getGlobalIndex());
       }
 
-   // put non-helper call in its own block by block splitting at the
-   // next treetop and then at the current one
+   // split the block at the call TreeTop so that the new block created
+   // after the call can become a merge point for all the fastpaths
    TR::Block* callBlock = tt->getEnclosingBlock();
    if (!performTransformation(comp, "%sSplitting block_%d at TreeTop [0x%p], which holds helper call node n%un\n", optDetailString(), callBlock->getNumber(), tt, node->getGlobalIndex())) return;
    TR::Block* targetBlock = callBlock->splitPostGRA(tt->getNextTreeTop(), cfg, true, NULL);
@@ -320,16 +350,17 @@ TR::TreeLowering::fastpathAcmpHelper(TR::Node * const node, TR::TreeTop * const 
 
    if (!performTransformation(comp, "%sInserting fastpath for lhs == rhs\n", optDetailString())) return;
 
-   // insert store of constant 1
-   // the value must go wherever the value returned by the helper call goes
-   // so that the code in the target block picks up the constant if we fast-path
-   // (i.e. jump around) the call
+   // Insert store of constant 1 as the result of the fastpath.
+   // The value must go wherever the value returned by the helper call goes
+   // so that the code in the target block (merge point) picks up the constant
+   // if the branch is taken. Use the TreeTop previously inserted to anchor the
+   // call to figure out where the return value of the call is being put.
    TR::Node* anchoredNode = anchoredCallTT->getNode()->getFirstChild(); // call node is under a treetop node
    if (trace())
       traceMsg(comp, "Anchored call has been transformed into %s node n%dn\n", anchoredNode->getOpCode().getName(), anchoredNode->getGlobalIndex());
    auto* const1Node = TR::Node::iconst(1);
    TR::Node* storeNode = NULL;
-   TR::Node* regDepForStoreNode = NULL;
+   TR::Node* regDepForStoreNode = NULL; // this is the reg dep for the store if one is needed
    if (anchoredNode->getOpCodeValue() == TR::iRegLoad)
       {
       if (trace())
@@ -353,10 +384,11 @@ TR::TreeLowering::fastpathAcmpHelper(TR::Node * const node, TR::TreeTop * const 
       TR_ASSERT_FATAL_WITH_NODE(anchoredNode, false, "Anchored call has been turned into unexpected opcode\n");
    tt->insertBefore(TR::TreeTop::create(comp, storeNode));
 
-   // insert acmpeq for fastpath, taking care to set the proper register dependencies
-   // Any register dependencies added by splitPostGRA will now be on the BBExit for
-   // the call block.  As the ifacmpeq branching around the call block will reach the same
-   // target block, copy any GlRegDeps from the end of the call block to the ifacmpeq
+   // Insert acmpeq for fastpath, taking care to set the proper register dependencies.
+   // Any register dependencies added by splitPostGRA will now be on the BBExit of the block
+   // containing the call. The target (fallthrough) of the call block and the target of the
+   // ifacmpeq must be the same block, so copy the GlRegDeps from the end of the call block
+   // to the ifacmpeq, if needed.
    auto* ifacmpeqNode = TR::Node::createif(TR::ifacmpeq, anchoredCallArg1TT->getNode()->getFirstChild(), anchoredCallArg2TT->getNode()->getFirstChild(), targetBlock->getEntry());
    if (callBlock->getExit()->getNode()->getNumChildren() > 0)
       {
@@ -370,8 +402,8 @@ TR::TreeLowering::fastpathAcmpHelper(TR::Node * const node, TR::TreeTop * const 
 
    if (!performTransformation(comp, "%sInserting fastpath for lhs == NULL\n", optDetailString())) return;
 
-   // duplicate the store node and put 0 (false), because if the lhs is null
-   // the comparison must return false
+   // Create store of 0 as fastpath result by duplicate the node used to store
+   // the constant 1. Also duplicate the corresponding regdep if needed.
    storeNode = storeNode->duplicateTree(true);
    storeNode->getFirstChild()->setInt(0);
    tt->insertBefore(TR::TreeTop::create(comp, storeNode));
@@ -382,7 +414,7 @@ TR::TreeLowering::fastpathAcmpHelper(TR::Node * const node, TR::TreeTop * const 
       regDepForStoreNode->setAndIncChild(0, storeNode->getFirstChild());
       }
 
-   // insert acmpeq to check if lhs is null
+   // Using a similar strategy as above, insert check for lhs == NULL.
    auto* const nullConst = TR::Node::aconst(0);
    auto* const checkLhsNull = TR::Node::createif(TR::ifacmpeq, anchoredCallArg1TT->getNode()->getFirstChild(), nullConst, targetBlock->getEntry());
    if (ifacmpeqNode->getNumChildren() == 3)
@@ -397,7 +429,7 @@ TR::TreeLowering::fastpathAcmpHelper(TR::Node * const node, TR::TreeTop * const 
 
    if (!performTransformation(comp, "%sInserting fastpath for rhs == NULL\n", optDetailString())) return;
 
-   // insert acmpeq to check if lhs is null
+   // Insert check for rhs == NULL.
    auto* const checkRhsNull = TR::Node::copy(checkLhsNull);
    checkRhsNull->setAndIncChild(0, anchoredCallArg2TT->getNode()->getFirstChild()); // replace lhs with rhs
    checkRhsNull->getChild(1)->incReferenceCount();
@@ -412,15 +444,15 @@ TR::TreeLowering::fastpathAcmpHelper(TR::Node * const node, TR::TreeTop * const 
 
    if (!performTransformation(comp, "%sInserting fastpath for lhs is VT\n", optDetailString())) return;
 
-   // create the ificmpeq node that checks classFlags for lhs
+   // Insert check for lhs is VT.
    auto* const vftSymRef = comp->getSymRefTab()->findOrCreateVftSymbolRef();
    auto* const classFlagsSymRef = comp->getSymRefTab()->findOrCreateClassFlagsSymbolRef();
-
    auto* const j9ClassIsVTFlag = TR::Node::iconst(node, J9ClassIsValueType);
-   auto* const arg1Vft = TR::Node::createWithSymRef(node, TR::aloadi, 1, anchoredCallArg1TT->getNode()->getFirstChild(), vftSymRef);
-   auto* const arg1ClassFlags = TR::Node::createWithSymRef(node, TR::iloadi, 1, arg1Vft, classFlagsSymRef);
-   auto* const isArg1ValueType = TR::Node::create(node, TR::iand, 2, arg1ClassFlags, j9ClassIsVTFlag);
-   auto* const checkLhsIsVT = TR::Node::createif(TR::ificmpeq, isArg1ValueType, storeNode->getFirstChild(), targetBlock->getEntry());
+
+   auto* const lhsVft = TR::Node::createWithSymRef(node, TR::aloadi, 1, anchoredCallArg1TT->getNode()->getFirstChild(), vftSymRef);
+   auto* const lhsClassFlags = TR::Node::createWithSymRef(node, TR::iloadi, 1, lhsVft, classFlagsSymRef);
+   auto* const isLhsValueType = TR::Node::create(node, TR::iand, 2, lhsClassFlags, j9ClassIsVTFlag);
+   auto* const checkLhsIsVT = TR::Node::createif(TR::ificmpeq, isLhsValueType, storeNode->getFirstChild(), targetBlock->getEntry());
    if (checkLhsNull->getNumChildren() == 3)
       {
       TR::Node* sourceDeps = checkLhsNull->getChild(2);
@@ -433,11 +465,11 @@ TR::TreeLowering::fastpathAcmpHelper(TR::Node * const node, TR::TreeTop * const 
 
    if (!performTransformation(comp, "%sInserting fastpath for rhs is VT\n", optDetailString())) return;
 
-   // create the ificmpeq node that checks classFlags for rhs
-   auto* const arg2Vft = TR::Node::createWithSymRef(node, TR::aloadi, 1, anchoredCallArg2TT->getNode()->getFirstChild(), vftSymRef);
-   auto* const arg2ClassFlags = TR::Node::createWithSymRef(node, TR::iloadi, 1, arg2Vft, classFlagsSymRef);
-   auto* const isArg2ValueType = TR::Node::create(node, TR::iand, 2, arg2ClassFlags, j9ClassIsVTFlag);
-   auto* const checkRhsIsVT = TR::Node::createif(TR::ificmpeq, isArg2ValueType, storeNode->getFirstChild(), targetBlock->getEntry());
+   // Insert check for rhs is VT.
+   auto* const rhsVft = TR::Node::createWithSymRef(node, TR::aloadi, 1, anchoredCallArg2TT->getNode()->getFirstChild(), vftSymRef);
+   auto* const rhsClassFlags = TR::Node::createWithSymRef(node, TR::iloadi, 1, rhsVft, classFlagsSymRef);
+   auto* const isRhsValueType = TR::Node::create(node, TR::iand, 2, rhsClassFlags, j9ClassIsVTFlag);
+   auto* const checkRhsIsVT = TR::Node::createif(TR::ificmpeq, isRhsValueType, storeNode->getFirstChild(), targetBlock->getEntry());
    if (checkLhsNull->getNumChildren() == 3)
       {
       TR::Node* sourceDeps = checkLhsNull->getChild(2);
