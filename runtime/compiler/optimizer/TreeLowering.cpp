@@ -130,6 +130,32 @@ TR::TreeLowering::lowerValueTypeOperations(TR::Node* node, TR::TreeTop* tt)
       }
    }
 
+/**
+ * @brief Copy register dependencies between GlRegDeps node at exit points.
+ *
+ * This function is only intended to work with GlRegDeps nodes for exit points,
+ * (i.e. BBEnd, branch, or jump nodes) within the same extended basic block.
+ *
+ * Register dependencies are copied "logically", meaning that the actual node
+ * used to represent a dependency won't necessarily be copied. If the reg dep
+ * is represented by a PassThrough, then the node itself is copied and its
+ * child is commoned (so it's lifetime is exteneded; note that in correctly-formed
+ * IL, the child must also be the child of a reg store in the containing block).
+ * Otherwise, the dependency must be represented by a reg load, which must have
+ * come from the GlRegDeps node at the entry point and *must* be commoned
+ * (so it won't get copied).
+ *
+ * In addition, this function allows *one* register dependency to be changed
+ * (substituted). That is, if a register dependency is found under `sourceNode`
+ * for the same register that is set on `subsituteNode`, then `substituteNode`
+ * will be used instead of the dependency from `sourceNode`. Note that the
+ * reference of of `substituteNode` is incremented if/when it gets added. If
+ * `substituteNode` is NULL the no substitution will be attempted.
+ *
+ * @param targetNode is the GlRegDeps node that reg deps are copied to
+ * @param sourceNode is the GlRegDeps node that reg deps are copied from
+ * @param substituteNode is the reg dep node to substitute if a matching register is found in `sourceNode` (NULL if none)
+ */
 void
 copyExitRegDepsAndSubstitue(TR::Node* const targetNode, TR::Node* const sourceNode, TR::Node* const substituteNode)
    {
@@ -160,6 +186,25 @@ copyExitRegDepsAndSubstitue(TR::Node* const targetNode, TR::Node* const sourceNo
       }
    }
 
+/**
+ * @brief Add a GlRegDeps node to a branch by copying some other GlRegDeps.
+ *
+ * Given branch node, adds a GlRegDeps node by copying the dependencies from
+ * a different GlRegDeps. This function allows *one* register dependency to
+ * be changed (substituted). See `copyExitRegDepsAndSubstitue()` for details.
+ *
+ * Note that the branch node is assumed to *not* have a GlRegDeps node already.
+ *
+ * Returns a pointer to the newly created GlRegDeps. This is can be particularly
+ * useful to have whe doing a substitution (e.g. for chaining calls).
+ *
+ * If the source GlRegDeps is NULL, then nothing is done and NULL is returned.
+ *
+ * @param branchNode is the branch node the GlRegDeps will be added to
+ * @param sourceGlRegDepsNode is the GlRegDeps node used to copy the reg deps from
+ * @param substituteNode is the reg dep node to be subsituted (NULL if none)
+ * @return TR::Node* the newly created GlRegDeps or NULL if `sourceGelRegDepsNode` was NULL
+ */
 TR::Node* 
 copyBranchGlRegDepsAndSubstitute(TR::Node* const branchNode, TR::Node* const sourceGlRegDepsNode, TR::Node* const substituteNode)
    {
@@ -318,15 +363,14 @@ TR::TreeLowering::fastpathAcmpHelper(TR::Node * const node, TR::TreeTop * const 
    if (!performTransformation(comp, "%sPreparing for post-GRA block split by anchoring helper call and arguments\n", optDetailString()))
       return;
 
-   // anchor call node after split point to ensure the returned value goes into
-   // either a temp or a global register
+   // Anchor call node after split point to ensure the returned value goes into
+   // either a temp or a global register.
    auto* const anchoredCallTT = TR::TreeTop::create(comp, tt, TR::Node::create(TR::treetop, 1, node));
    if (trace())
       traceMsg(comp, "Anchoring call node under treetop n%dn (0x%p)\n", anchoredCallTT->getNode()->getGlobalIndex(), anchoredCallTT->getNode());
 
-   // anchor the call arguments just before the call
-   // this ensures the values are live before the call so that we can
-   // propagate their values in global registers if needed
+   // Anchor the call arguments just before the call. This ensures the values are
+   // live before the call so that we can propagate their values in global registers if needed.
    auto* const anchoredCallArg1TT = TR::TreeTop::create(comp, tt->getPrevTreeTop(), TR::Node::create(TR::treetop, 1, node->getFirstChild()));
    auto* const anchoredCallArg2TT = TR::TreeTop::create(comp, tt->getPrevTreeTop(), TR::Node::create(TR::treetop, 1, node->getSecondChild()));
    if (trace())
@@ -335,8 +379,8 @@ TR::TreeLowering::fastpathAcmpHelper(TR::Node * const node, TR::TreeTop * const 
          node->getFirstChild()->getGlobalIndex(), node->getSecondChild()->getGlobalIndex(), anchoredCallArg1TT->getNode()->getGlobalIndex(), anchoredCallArg2TT->getNode()->getGlobalIndex());
       }
 
-   // split the block at the call TreeTop so that the new block created
-   // after the call can become a merge point for all the fastpaths
+   // Split the block at the call TreeTop so that the new block created
+   // after the call can become a merge point for all the fastpaths.
    TR::Block* callBlock = tt->getEnclosingBlock();
    if (!performTransformation(comp, "%sSplitting block_%d at TreeTop [0x%p], which holds helper call node n%un\n", optDetailString(), callBlock->getNumber(), tt, node->getGlobalIndex()))
       return;
@@ -372,8 +416,8 @@ TR::TreeLowering::fastpathAcmpHelper(TR::Node * const node, TR::TreeTop * const 
       auto const globalRegNum = anchoredNode->getGlobalRegisterNumber();
       storeNode = TR::Node::create(TR::iRegStore, 1, const1Node);
       storeNode->setGlobalRegisterNumber(globalRegNum);
-      // since the result is in a global register, we're going to need a PassThrough
-      // on the exit point GlRegDeps
+      // Since the result is in a global register, we're going to need a PassThrough
+      // on the exit point GlRegDeps.
       regDepForStoreNode = TR::Node::create(TR::PassThrough, 1, const1Node);
       regDepForStoreNode->setGlobalRegisterNumber(globalRegNum);
       }
