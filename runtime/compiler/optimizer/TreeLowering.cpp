@@ -344,7 +344,6 @@ TR::TreeLowering::splitForFastpath(TR::Block* const block, TR::TreeTop* const sp
  * |BBEnd            |
  * +-----------------+
  *
- *
  * Any GlRegDeps on the extension block are created by OMR::Block::splitPostGRA
  * while those on the ifacmpeq at the end of the first block are copies of those,
  * with the exception of any register (x, above) holding the result of the compare
@@ -432,7 +431,7 @@ TR::TreeLowering::fastpathAcmpHelper(TR::Node * const node, TR::TreeTop * const 
       TR_ASSERT_FATAL_WITH_NODE(anchoredNode, false, "Anchored call has been turned into unexpected opcode\n");
    tt->insertBefore(TR::TreeTop::create(comp, storeNode));
 
-   // If the BBExit of the block containing the call has a GlRegDeps node,
+   // If the BBEnd of the block containing the call has a GlRegDeps node,
    // a matching GlRegDeps node will be needed for all the branches. The
    // fallthrough of the call block and the branch targets will be the
    // same block. So, all register dependencies will be mostly the same.
@@ -477,10 +476,8 @@ TR::TreeLowering::fastpathAcmpHelper(TR::Node * const node, TR::TreeTop * const 
    if (!performTransformation(comp, "%sInserting fastpath for rhs == NULL\n", optDetailString()))
       return;
 
-   auto* const checkRhsNull = TR::Node::copy(checkLhsNull);
-   checkRhsNull->setAndIncChild(0, anchoredCallArg2TT->getNode()->getFirstChild()); // replace lhs with rhs
-   checkRhsNull->getChild(1)->incReferenceCount();
-   copyBranchGlRegDepsAndSubstitute(checkRhsNull, exitGlRegDeps, NULL); // reg deps don't change so no need to update exitGlRegDeps
+   auto* const checkRhsNull = TR::Node::createif(TR::ifacmpeq, anchoredCallArg2TT->getNode()->getFirstChild(), nullConst, targetBlock->getEntry());
+   exitGlRegDeps = copyBranchGlRegDepsAndSubstitute(checkRhsNull, exitGlRegDeps, NULL); // substitution happened above so no need to do it again
    tt->insertBefore(TR::TreeTop::create(comp, checkRhsNull));
    callBlock = splitForFastpath(callBlock, tt, targetBlock);
 
