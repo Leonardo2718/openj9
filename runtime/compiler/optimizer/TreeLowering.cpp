@@ -43,14 +43,14 @@ TR::TreeLowering::perform()
       }
 
    TR::ResolvedMethodSymbol* methodSymbol = comp()->getMethodSymbol();
-   for (TR::PreorderNodeIterator nodeIter(methodSymbol->getFirstTreeTop(), comp()); nodeIter != NULL ; ++nodeIter)
+   for (TR::PreorderNodeIterator nodeIter(methodSymbol->getFirstTreeTop(), comp()); nodeIter != NULL; ++nodeIter)
       {
       TR::Node* node = nodeIter.currentNode();
       TR::TreeTop* tt = nodeIter.currentTree();
 
       if (TR::Compiler->om.areValueTypesEnabled())
          {
-         lowerValueTypeOperations(node, tt);
+         lowerValueTypeOperations(nodeIter, node, tt);
          }
       }
 
@@ -109,7 +109,7 @@ TR::TreeLowering::moveNodeToEndOfBlock(TR::Block* const block, TR::TreeTop* cons
  *
  */
 void
-TR::TreeLowering::lowerValueTypeOperations(TR::Node* node, TR::TreeTop* tt)
+TR::TreeLowering::lowerValueTypeOperations(TR::PreorderNodeIterator& nodeIter, TR::Node* node, TR::TreeTop* tt)
    {
    TR::SymbolReferenceTable * symRefTab = comp()->getSymRefTab();
 
@@ -121,7 +121,7 @@ TR::TreeLowering::lowerValueTypeOperations(TR::Node* node, TR::TreeTop* tt)
       static const bool disableAcmpFastPath =  NULL != feGetEnv("TR_DisableAcmpFastpath");
       if (!disableAcmpFastPath)
          {
-         fastpathAcmpHelper(node, tt);
+         fastpathAcmpHelper(nodeIter, node, tt);
          }
       }
    else if (node->getOpCodeValue() == TR::ArrayStoreCHK)
@@ -227,6 +227,8 @@ TR::TreeLowering::splitForFastpath(TR::Block* const block, TR::TreeTop* const sp
    cfg->addEdge(block, targetBlock);
    return newBlock;
    }
+
+#define TRACE_TL(fmt, ...) do { if (trace()) traceMsg(comp, fmt, __VA_ARGS__); } while (false)
 
 /**
  * @brief Add checks to skip (fast-path) acmpHelper call
@@ -353,7 +355,7 @@ TR::TreeLowering::splitForFastpath(TR::Block* const block, TR::TreeTop* const sp
  *
  */
 void
-TR::TreeLowering::fastpathAcmpHelper(TR::Node * const node, TR::TreeTop * const tt)
+TR::TreeLowering::fastpathAcmpHelper(TR::PreorderNodeIterator& nodeIter, TR::Node * const node, TR::TreeTop * const tt)
    {
    TR::Compilation* comp = self()->comp();
    TR::CFG* cfg = comp->getFlowGraph();
@@ -499,13 +501,63 @@ TR::TreeLowering::fastpathAcmpHelper(TR::Node * const node, TR::TreeTop * const 
    if (!performTransformation(comp, "%sInserting fastpath for rhs is VT\n", optDetailString()))
       return;
 
+   // Put call in it's own block so it will be eaisy to move. Importantly,
+   // the block *cannot* be an extension because everything *must* be uncommoned.
+   auto* const prevBlock = callBlock;
+   callBlock = callBlock->splitPostGRA(tt, cfg, true, NULL);
+
+   TRACE_TL("prevBlock is %d, callBlock is %d\n", prevBlock->getNumber(), callBlock->getNumber());
+
+   // Force nodeIter to first TreeTop of next block so that
+   // moving callBlock won't cause problems while iterating
+   while (nodeIter.currentTree() != targetBlock->getEntry())
+      ++nodeIter;
+
+   TRACE_TL("%siterator is not pointing at n%un", optDetailString(), nodeIter.currentNode()->getGlobalIndex());
+
+   // Move call block out of line.
+   // The CFG edge that exists from prevBlock to callBlock is kept because
+   // it will be needed once the branch for the fastpath gets added.
+   cfg->findLastTreeTop()->insertTreeTopsAfterMe(callBlock->getEntry(), callBlock->getExit());
+   prevBlock->getExit()->join(targetBlock->getEntry());
+   cfg->addEdge(prevBlock, targetBlock);
+
+   // Create and insert branch.
    auto* const rhsVft = TR::Node::createWithSymRef(node, TR::aloadi, 1, anchoredCallArg2TT->getNode()->getFirstChild(), vftSymRef);
    auto* const rhsClassFlags = TR::Node::createWithSymRef(node, TR::iloadi, 1, rhsVft, classFlagsSymRef);
    auto* const isRhsValueType = TR::Node::create(node, TR::iand, 2, rhsClassFlags, j9ClassIsVTFlag);
-   auto* const checkRhsIsVT = TR::Node::createif(TR::ificmpeq, isRhsValueType, storeNode->getFirstChild(), targetBlock->getEntry());
-   copyBranchGlRegDepsAndSubstitute(checkRhsIsVT, exitGlRegDeps, NULL);
-   tt->insertBefore(TR::TreeTop::create(comp, checkRhsIsVT));
-   callBlock = splitForFastpath(callBlock, tt, targetBlock);
+   auto* const checkRhsIsNotVT = TR::Node::createif(TR::ificmpne, isRhsValueType, storeNode->getFirstChild(), callBlock->getEntry());
+   if (exitGlRegDeps)
+      {
+      auto* const bbEnd = prevBlock->getExit()->getNode();
+      checkRhsIsNotVT->setChild(2, bbEnd->getChild(0));
+      checkRhsIsNotVT->setNumChildren(3);
+      auto* const glRegDeps = TR::Node::create(GlRegDeps, exitGlRegDeps->getNumChildren());
+      copyExitRegDepsAndSubstitue(glRegDeps, exitGlRegDeps, NULL);
+      bbEnd->setAndIncChild(0, glRegDeps);
+      }
+   prevBlock->append(TR::TreeTop::create(comp, checkRhsIsNotVT));
+   // Note: there's no need to add a CFG edge because one already exists from
+   // before callBlock was moved.
+   TRACE_TL("created rhs != VT branch node n%un\n", checkRhsIsNotVT->getGlobalIndex());
+
+   // Insert goto target block in outline block.
+   auto* const gotoNode = TR::Node::create(node, TR::Goto, 0, targetBlock->getEntry());
+   callBlock->append(TR::TreeTop::create(comp, gotoNode));
+   // Note: callBlock already has a CFG edge to targetBlock
+   // from before it got moved, so adding one here is not required.
+
+   // Move exit GlRegDeps in callBlock.
+   // The correct dependencies should have been inserted by splitPostGRA,
+   // so they just need to be moved from the BBEnd to the Goto.
+   if (callBlock->getEntry()->getNode()->getNumChildren() > 0)
+      {
+      auto* const bbEnd = callBlock->getExit()->getNode();
+      auto* glRegDeps = bbEnd->getChild(0);
+      bbEnd->setNumChildren(0);
+      glRegDeps->decReferenceCount();
+      gotoNode->addChildren(&glRegDeps, 1);
+      }
    }
 
 /**
