@@ -368,7 +368,7 @@ TR::TreeLowering::fastpathAcmpHelper(TR::PreorderNodeIterator& nodeIter, TR::Nod
    // either a temp or a global register.
    auto* const anchoredCallTT = TR::TreeTop::create(comp, tt, TR::Node::create(TR::treetop, 1, node));
    if (trace())
-      traceMsg(comp, "Anchoring call node under treetop n%dn (0x%p)\n", anchoredCallTT->getNode()->getGlobalIndex(), anchoredCallTT->getNode());
+      traceMsg(comp, "Anchoring call node under treetop n%un (0x%p)\n", anchoredCallTT->getNode()->getGlobalIndex(), anchoredCallTT->getNode());
 
    // Anchor the call arguments just before the call. This ensures the values are
    // live before the call so that we can propagate their values in global registers if needed.
@@ -376,7 +376,7 @@ TR::TreeLowering::fastpathAcmpHelper(TR::PreorderNodeIterator& nodeIter, TR::Nod
    auto* const anchoredCallArg2TT = TR::TreeTop::create(comp, tt->getPrevTreeTop(), TR::Node::create(TR::treetop, 1, node->getSecondChild()));
    if (trace())
       {
-      traceMsg(comp, "Anchoring call arguments n%dn and n%dn under treetops n%dn and n%dn\n",
+      traceMsg(comp, "Anchoring call arguments n%un and n%un under treetops n%un and n%un\n",
          node->getFirstChild()->getGlobalIndex(), node->getSecondChild()->getGlobalIndex(), anchoredCallArg1TT->getNode()->getGlobalIndex(), anchoredCallArg2TT->getNode()->getGlobalIndex());
       }
 
@@ -406,7 +406,7 @@ TR::TreeLowering::fastpathAcmpHelper(TR::PreorderNodeIterator& nodeIter, TR::Nod
    // call to figure out where the return value of the call is being put.
    TR::Node* anchoredNode = anchoredCallTT->getNode()->getFirstChild(); // call node is under a treetop node
    if (trace())
-      traceMsg(comp, "Anchored call has been transformed into %s node n%dn\n", anchoredNode->getOpCode().getName(), anchoredNode->getGlobalIndex());
+      traceMsg(comp, "Anchored call has been transformed into %s node n%un\n", anchoredNode->getOpCode().getName(), anchoredNode->getGlobalIndex());
    auto* const1Node = TR::Node::iconst(1);
    TR::Node* storeNode = NULL;
    TR::Node* regDepForStoreNode = NULL; // this is the reg dep for the store if one is needed
@@ -452,6 +452,8 @@ TR::TreeLowering::fastpathAcmpHelper(TR::PreorderNodeIterator& nodeIter, TR::Nod
    exitGlRegDeps = copyBranchGlRegDepsAndSubstitute(ifacmpeqNode, exitGlRegDeps, regDepForStoreNode);
    tt->insertBefore(TR::TreeTop::create(comp, ifacmpeqNode));
    callBlock = splitForFastpath(callBlock, tt, targetBlock);
+   if (trace())
+      traceMsg(comp, "Added check node n%un; call node is now in block_%d\n", ifacmpeqNode->getGlobalIndex(), callBlock->getNumber());
 
    if (!performTransformation(comp, "%sInserting fastpath for lhs == NULL\n", optDetailString()))
       return;
@@ -474,6 +476,8 @@ TR::TreeLowering::fastpathAcmpHelper(TR::PreorderNodeIterator& nodeIter, TR::Nod
    exitGlRegDeps = copyBranchGlRegDepsAndSubstitute(checkLhsNull, exitGlRegDeps, regDepForStoreNode);
    tt->insertBefore(TR::TreeTop::create(comp, checkLhsNull));
    callBlock = splitForFastpath(callBlock, tt, targetBlock);
+   if (trace())
+      traceMsg(comp, "Added check node n%un; call node is now in block_%d\n", checkLhsNull->getGlobalIndex(), callBlock->getNumber());
 
    if (!performTransformation(comp, "%sInserting fastpath for rhs == NULL\n", optDetailString()))
       return;
@@ -482,6 +486,8 @@ TR::TreeLowering::fastpathAcmpHelper(TR::PreorderNodeIterator& nodeIter, TR::Nod
    exitGlRegDeps = copyBranchGlRegDepsAndSubstitute(checkRhsNull, exitGlRegDeps, NULL); // substitution happened above so no need to do it again
    tt->insertBefore(TR::TreeTop::create(comp, checkRhsNull));
    callBlock = splitForFastpath(callBlock, tt, targetBlock);
+   if (trace())
+      traceMsg(comp, "Added check node n%un; call node is now in block_%d\n", checkRhsNull->getGlobalIndex(), callBlock->getNumber());
 
    if (!performTransformation(comp, "%sInserting fastpath for lhs is VT\n", optDetailString()))
       return;
@@ -497,6 +503,8 @@ TR::TreeLowering::fastpathAcmpHelper(TR::PreorderNodeIterator& nodeIter, TR::Nod
    copyBranchGlRegDepsAndSubstitute(checkLhsIsVT, exitGlRegDeps, NULL);
    tt->insertBefore(TR::TreeTop::create(comp, checkLhsIsVT));
    callBlock = splitForFastpath(callBlock, tt, targetBlock);
+   if (trace())
+      traceMsg(comp, "Added check node n%un; call node is now in block_%d\n", checkLhsIsVT->getGlobalIndex(), callBlock->getNumber());
 
    if (!performTransformation(comp, "%sInserting fastpath for rhs is VT\n", optDetailString()))
       return;
@@ -506,14 +514,16 @@ TR::TreeLowering::fastpathAcmpHelper(TR::PreorderNodeIterator& nodeIter, TR::Nod
    auto* const prevBlock = callBlock;
    callBlock = callBlock->splitPostGRA(tt, cfg, true, NULL);
 
-   TRACE_TL("prevBlock is %d, callBlock is %d\n", prevBlock->getNumber(), callBlock->getNumber());
+   if (trace())
+      traceMsg(comp, "Call node isolated in block_%d by splitPostGRA\n", callBlock->getNumber());
 
    // Force nodeIter to first TreeTop of next block so that
    // moving callBlock won't cause problems while iterating
    while (nodeIter.currentTree() != targetBlock->getEntry())
       ++nodeIter;
 
-   TRACE_TL("%siterator is not pointing at n%un", optDetailString(), nodeIter.currentNode()->getGlobalIndex());
+   if (trace())
+      traceMsg(comp, "FORCED treeLowering ITERATOR TO POINT TO NODE n%unn\n", nodeIter.currentNode()->getGlobalIndex());
 
    // Move call block out of line.
    // The CFG edge that exists from prevBlock to callBlock is kept because
@@ -521,6 +531,8 @@ TR::TreeLowering::fastpathAcmpHelper(TR::PreorderNodeIterator& nodeIter, TR::Nod
    cfg->findLastTreeTop()->insertTreeTopsAfterMe(callBlock->getEntry(), callBlock->getExit());
    prevBlock->getExit()->join(targetBlock->getEntry());
    cfg->addEdge(prevBlock, targetBlock);
+   if (trace())
+      traceMsg(comp, "Moved call block to end of method\n");
 
    // Create and insert branch.
    auto* const rhsVft = TR::Node::createWithSymRef(node, TR::aloadi, 1, anchoredCallArg2TT->getNode()->getFirstChild(), vftSymRef);
@@ -529,6 +541,8 @@ TR::TreeLowering::fastpathAcmpHelper(TR::PreorderNodeIterator& nodeIter, TR::Nod
    auto* const checkRhsIsNotVT = TR::Node::createif(TR::ificmpne, isRhsValueType, storeNode->getFirstChild(), callBlock->getEntry());
    if (exitGlRegDeps)
       {
+      // Because we've switched the fallthrough and target blocks, the regsiter
+      // dependencies also need to be switched.
       auto* const bbEnd = prevBlock->getExit()->getNode();
       checkRhsIsNotVT->setChild(2, bbEnd->getChild(0));
       checkRhsIsNotVT->setNumChildren(3);
@@ -539,7 +553,8 @@ TR::TreeLowering::fastpathAcmpHelper(TR::PreorderNodeIterator& nodeIter, TR::Nod
    prevBlock->append(TR::TreeTop::create(comp, checkRhsIsNotVT));
    // Note: there's no need to add a CFG edge because one already exists from
    // before callBlock was moved.
-   TRACE_TL("created rhs != VT branch node n%un\n", checkRhsIsNotVT->getGlobalIndex());
+   if (trace())
+      traceMsg(comp, "Added check node n%un\n", checkRhsIsNotVT->getGlobalIndex());
 
    // Insert goto target block in outline block.
    auto* const gotoNode = TR::Node::create(node, TR::Goto, 0, targetBlock->getEntry());
