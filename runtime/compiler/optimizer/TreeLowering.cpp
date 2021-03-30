@@ -459,6 +459,58 @@ TR::TreeLowering::fastpathAcmpHelper(TR::Node * const node, TR::TreeTop * const 
       traceMsg(comp, "Call node n%dn is now in block_%d (prevBlock is %d)\n", node->getGlobalIndex(), callBlock->getNumber(), prevBlock->getNumber());
    prevBlock->append(TR::TreeTop::create(comp, checkRhsNull));
    cfg->addEdge(prevBlock, targetBlock);
+
+   if (!performTransformation(comp, "%sInserting fastpath for lhs is VT\n", optDetailString()))
+      return;
+
+   auto* const vftSymRef = comp->getSymRefTab()->findOrCreateVftSymbolRef();
+   auto* const classFlagsSymRef = comp->getSymRefTab()->findOrCreateClassFlagsSymbolRef();
+   auto* const j9ClassIsVTFlag = TR::Node::iconst(node, J9ClassIsValueType);
+
+   auto* const lhsVft = TR::Node::createWithSymRef(node, TR::aloadi, 1, anchoredCallArg1TT->getNode()->getFirstChild(), vftSymRef);
+   auto* const lhsClassFlags = TR::Node::createWithSymRef(node, TR::iloadi, 1, lhsVft, classFlagsSymRef);
+   auto* const isLhsValueType = TR::Node::create(node, TR::iand, 2, lhsClassFlags, j9ClassIsVTFlag);
+   auto* const checkLhsIsVT = TR::Node::createif(TR::ificmpeq, isLhsValueType, storeNode->getFirstChild(), targetBlock->getEntry());
+   if (checkLhsNull->getNumChildren() == 3)
+      {
+      TR::Node* sourceDeps = checkLhsNull->getChild(2);
+      TR::Node* regDeps = TR::Node::create(TR::GlRegDeps, sourceDeps->getNumChildren());
+      copyExitRegDepsAndSubstitue(regDeps, sourceDeps, NULL);
+      checkLhsIsVT->addChildren(&regDeps, 1);
+      }
+
+   // create block to check if lhs is VT
+   prevBlock = callBlock;
+   callBlock = callBlock->split(tt, cfg);
+   callBlock->setIsExtensionOfPreviousBlock(true);
+   if (trace())
+      traceMsg(comp, "Call node n%dn is now in block_%d (prevBlock is %d)\n", node->getGlobalIndex(), callBlock->getNumber(), prevBlock->getNumber());
+   prevBlock->append(TR::TreeTop::create(comp, checkLhsIsVT));
+   cfg->addEdge(prevBlock, targetBlock);
+
+   if (!performTransformation(comp, "%sInserting fastpath for rhs is VT\n", optDetailString()))
+      return;
+
+   auto* const rhsVft = TR::Node::createWithSymRef(node, TR::aloadi, 1, anchoredCallArg2TT->getNode()->getFirstChild(), vftSymRef);
+   auto* const rhsClassFlags = TR::Node::createWithSymRef(node, TR::iloadi, 1, rhsVft, classFlagsSymRef);
+   auto* const isRhsValueType = TR::Node::create(node, TR::iand, 2, rhsClassFlags, j9ClassIsVTFlag);
+   auto* const checkRhsIsVT = TR::Node::createif(TR::ificmpeq, isRhsValueType, storeNode->getFirstChild(), targetBlock->getEntry());
+   if (checkLhsNull->getNumChildren() == 3)
+      {
+      TR::Node* sourceDeps = checkLhsNull->getChild(2);
+      TR::Node* regDeps = TR::Node::create(TR::GlRegDeps, sourceDeps->getNumChildren());
+      copyExitRegDepsAndSubstitue(regDeps, sourceDeps, NULL);
+      checkRhsIsVT->addChildren(&regDeps, 1);
+      }
+
+   // create block to check if rhs is VT
+   prevBlock = callBlock;
+   callBlock = callBlock->split(tt, cfg);
+   callBlock->setIsExtensionOfPreviousBlock(true);
+   if (trace())
+      traceMsg(comp, "Call node n%dn is now in block_%d (prevBlock is %d)\n", node->getGlobalIndex(), callBlock->getNumber(), prevBlock->getNumber());
+   prevBlock->append(TR::TreeTop::create(comp, checkRhsIsVT));
+   cfg->addEdge(prevBlock, targetBlock);
    }
 
 /**
