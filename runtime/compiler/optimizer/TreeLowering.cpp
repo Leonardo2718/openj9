@@ -555,7 +555,7 @@ TR::TreeLowering::fastpathAcmpHelper(TR::PreorderNodeIterator& nodeIter, TR::Nod
    if (exitGlRegDeps)
       {
       auto* const bbEnd = prevBlock->getExit()->getNode();
-      auto* glRegDeps = TR::Node::create(GlRegDeps, exitGlRegDeps->getNumChildren());
+      auto* glRegDeps = TR::Node::create(TR::GlRegDeps, exitGlRegDeps->getNumChildren());
       copyExitRegDepsAndSubstitue(glRegDeps, exitGlRegDeps, NULL);
       bbEnd->addChildren(&glRegDeps, 1);
       }
