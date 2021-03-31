@@ -28,35 +28,6 @@
 #include "il/Block_inlines.hpp"
 #include "infra/ILWalk.hpp"
 
-const char *
-TR::TreeLowering::optDetailString() const throw()
-   {
-   return "O^O TREE LOWERING: ";
-   }
-
-int32_t
-TR::TreeLowering::perform()
-   {
-   if (!TR::Compiler->om.areValueTypesEnabled())
-      {
-      return 0;
-      }
-
-   TR::ResolvedMethodSymbol* methodSymbol = comp()->getMethodSymbol();
-   for (TR::PreorderNodeIterator nodeIter(methodSymbol->getFirstTreeTop(), comp()); nodeIter != NULL; ++nodeIter)
-      {
-      TR::Node* node = nodeIter.currentNode();
-      TR::TreeTop* tt = nodeIter.currentTree();
-
-      if (TR::Compiler->om.areValueTypesEnabled())
-         {
-         lowerValueTypeOperations(nodeIter, node, tt);
-         }
-      }
-
-   return 0;
-   }
-
 void
 TR::TreeLowering::moveNodeToEndOfBlock(TR::Block* const block, TR::TreeTop* const tt, TR::Node* const node)
    {
@@ -106,7 +77,7 @@ TR::TreeLowering::moveNodeToEndOfBlock(TR::Block* const block, TR::TreeTop* cons
 
 
 void
-TR::TreeLowering::LoweringTransformer::moveNodeToEndOfBlock(TR::Block* const block, TR::TreeTop* const tt, TR::Node* const node)
+TR::TreeLowering::Transformer::moveNodeToEndOfBlock(TR::Block* const block, TR::TreeTop* const tt, TR::Node* const node)
    {
    TR::Compilation* comp = this->comp();
    TR::TreeTop* blockExit = block->getExit();
@@ -153,39 +124,13 @@ TR::TreeLowering::LoweringTransformer::moveNodeToEndOfBlock(TR::Block* const blo
    }
 
 TR::Block*
-TR::TreeLowering::LoweringTransformer::splitForFastpath(TR::Block* const block, TR::TreeTop* const splitPoint, TR::Block* const targetBlock)
+TR::TreeLowering::Transformer::splitForFastpath(TR::Block* const block, TR::TreeTop* const splitPoint, TR::Block* const targetBlock)
    {
    TR::CFG* const cfg = comp()->getFlowGraph();
    TR::Block* const newBlock = block->split(splitPoint, cfg);
    newBlock->setIsExtensionOfPreviousBlock(true);
    cfg->addEdge(block, targetBlock);
    return newBlock;
-   }
-
-/**
- * @brief Perform lowering related to Valhalla value types
- *
- */
-void
-TR::TreeLowering::lowerValueTypeOperations(TR::PreorderNodeIterator& nodeIter, TR::Node* node, TR::TreeTop* tt)
-   {
-   TR::SymbolReferenceTable * symRefTab = comp()->getSymRefTab();
-
-   if (node->getOpCode().isCall() &&
-         symRefTab->isNonHelper(node->getSymbolReference(), TR::SymbolReferenceTable::objectEqualityComparisonSymbol))
-      {
-      // turn the non-helper call into a VM helper call
-      node->setSymbolReference(symRefTab->findOrCreateAcmpHelperSymbolRef());
-      static const bool disableAcmpFastPath =  NULL != feGetEnv("TR_DisableAcmpFastpath");
-      if (!disableAcmpFastPath)
-         {
-         fastpathAcmpHelper(nodeIter, node, tt);
-         }
-      }
-   else if (node->getOpCodeValue() == TR::ArrayStoreCHK)
-      {
-      lowerArrayStoreCHK(node, tt);
-      }
    }
 
 /**
@@ -776,5 +721,60 @@ TR::TreeLowering::lowerArrayStoreCHK(TR::Node *node, TR::TreeTop *tt)
       nullCheckBlock->setIsExtensionOfPreviousBlock(true);
 
       cfg->addEdge(prevBlock, arrayStoreCheckBlock);
+      }
+   }
+
+const char *
+TR::TreeLowering::optDetailString() const throw()
+   {
+   return "O^O TREE LOWERING: ";
+   }
+
+int32_t
+TR::TreeLowering::perform()
+   {
+   if (!TR::Compiler->om.areValueTypesEnabled())
+      {
+      return 0;
+      }
+
+   TR::ResolvedMethodSymbol* methodSymbol = comp()->getMethodSymbol();
+   for (TR::PreorderNodeIterator nodeIter(methodSymbol->getFirstTreeTop(), comp()); nodeIter != NULL; ++nodeIter)
+      {
+      TR::Node* node = nodeIter.currentNode();
+      TR::TreeTop* tt = nodeIter.currentTree();
+
+      if (TR::Compiler->om.areValueTypesEnabled())
+         {
+         lowerValueTypeOperations(nodeIter, node, tt);
+         }
+      }
+
+   return 0;
+   }
+
+/**
+ * @brief Perform lowering related to Valhalla value types
+ *
+ */
+void
+TR::TreeLowering::lowerValueTypeOperations(TR::PreorderNodeIterator& nodeIter, TR::Node* node, TR::TreeTop* tt)
+   {
+   TR::SymbolReferenceTable * symRefTab = comp()->getSymRefTab();
+
+   if (node->getOpCode().isCall() &&
+         symRefTab->isNonHelper(node->getSymbolReference(), TR::SymbolReferenceTable::objectEqualityComparisonSymbol))
+      {
+      // turn the non-helper call into a VM helper call
+      node->setSymbolReference(symRefTab->findOrCreateAcmpHelperSymbolRef());
+      static const bool disableAcmpFastPath =  NULL != feGetEnv("TR_DisableAcmpFastpath");
+      if (!disableAcmpFastPath)
+         {
+         fastpathAcmpHelper(nodeIter, node, tt);
+         }
+      }
+   else if (node->getOpCodeValue() == TR::ArrayStoreCHK)
+      {
+      lowerArrayStoreCHK(node, tt);
       }
    }
