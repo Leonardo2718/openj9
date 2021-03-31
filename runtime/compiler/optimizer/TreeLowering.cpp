@@ -539,13 +539,17 @@ TR::TreeLowering::fastpathAcmpHelper(TR::PreorderNodeIterator& nodeIter, TR::Nod
    auto* const rhsClassFlags = TR::Node::createWithSymRef(node, TR::iloadi, 1, rhsVft, classFlagsSymRef);
    auto* const isRhsValueType = TR::Node::create(node, TR::iand, 2, rhsClassFlags, j9ClassIsVTFlag);
    auto* const checkRhsIsNotVT = TR::Node::createif(TR::ificmpne, isRhsValueType, storeNode->getFirstChild(), callBlock->getEntry());
-   if (exitGlRegDeps)
+   // Because we've switched the fallthrough and target blocks, the regsiter
+   // dependencies also need to be switched.
+   if (prevBlock->getExit()->getNode()->getNumChildren() > 0)
       {
-      // Because we've switched the fallthrough and target blocks, the regsiter
-      // dependencies also need to be switched.
       auto* const bbEnd = prevBlock->getExit()->getNode();
       checkRhsIsNotVT->setChild(2, bbEnd->getChild(0));
       checkRhsIsNotVT->setNumChildren(3);
+      }
+   if (exitGlRegDeps)
+      {
+      auto* const bbEnd = prevBlock->getExit()->getNode();
       auto* const glRegDeps = TR::Node::create(GlRegDeps, exitGlRegDeps->getNumChildren());
       copyExitRegDepsAndSubstitue(glRegDeps, exitGlRegDeps, NULL);
       bbEnd->setAndIncChild(0, glRegDeps);
