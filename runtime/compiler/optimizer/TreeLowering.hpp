@@ -256,8 +256,7 @@ class TreeLowering : public TR::Optimization
    TR::Block* splitForFastpath(TR::Block* const block, TR::TreeTop* const splitPoint, TR::Block* const targetBlock);
 
    // helpers related to Valhalla value type lowering
-   void lowerValueTypeOperations(TR::PreorderNodeIterator& nodeIter, TR::Node* node, TR::TreeTop* tt);
-   void fastpathAcmpHelper(TR::PreorderNodeIterator& nodeIter, TR::Node* const node, TR::TreeTop* const tt);
+   void lowerValueTypeOperations(TransformationManager& transformation, TR::Node* node, TR::TreeTop* tt);
    void lowerArrayStoreCHK(TR::Node* node, TR::TreeTop* tt);
 
    template <typename T>

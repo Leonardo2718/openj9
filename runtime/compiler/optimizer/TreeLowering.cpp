@@ -231,6 +231,27 @@ TR::TreeLowering::splitForFastpath(TR::Block* const block, TR::TreeTop* const sp
    return newBlock;
    }
 
+class AcmpTransformer: public TR::TreeLowering::Transformer
+   {
+   public:
+   explicit AcmpTransformer(TR::TreeLowering* opt)
+      : TR::TreeLowering::Transformer(opt)
+      {}
+
+   void lower(TR::Node* const node, TR::TreeTop* const tt) override
+      {
+      // turn the non-helper call into a VM helper call
+      node->setSymbolReference(comp()->getSymRefTab()->findOrCreateAcmpHelperSymbolRef());
+      static const bool disableAcmpFastPath =  NULL != feGetEnv("TR_DisableAcmpFastpath");
+      if (!disableAcmpFastPath)
+         {
+         fastpathAcmpHelper(node, tt);
+         }
+      }
+
+   void fastpathAcmpHelper(TR::Node* const node, TR::TreeTop* const tt);
+   };
+
 /**
  * @brief Add checks to skip (fast-path) acmpHelper call
  *
@@ -359,9 +380,9 @@ TR::TreeLowering::splitForFastpath(TR::Block* const block, TR::TreeTop* const sp
  *
  */
 void
-TR::TreeLowering::fastpathAcmpHelper(TR::PreorderNodeIterator& nodeIter, TR::Node * const node, TR::TreeTop * const tt)
+AcmpTransformer::fastpathAcmpHelper(TR::Node * const node, TR::TreeTop * const tt)
    {
-   TR::Compilation* comp = self()->comp();
+   TR::Compilation* comp = this->comp();
    TR::CFG* cfg = comp->getFlowGraph();
    cfg->invalidateStructure();
 
@@ -520,14 +541,6 @@ TR::TreeLowering::fastpathAcmpHelper(TR::PreorderNodeIterator& nodeIter, TR::Nod
 
    if (trace())
       traceMsg(comp, "Call node isolated in block_%d by splitPostGRA\n", callBlock->getNumber());
-
-   // Force nodeIter to first TreeTop of next block so that
-   // moving callBlock won't cause problems while iterating
-   while (nodeIter.currentTree() != targetBlock->getEntry())
-      ++nodeIter;
-
-   if (trace())
-      traceMsg(comp, "FORCED treeLowering ITERATOR TO POINT TO NODE n%unn\n", nodeIter.currentNode()->getGlobalIndex());
 
    // Move call block out of line.
    // The CFG edge that exists from prevBlock to callBlock is kept because
@@ -748,7 +761,7 @@ TR::TreeLowering::perform()
 
       if (TR::Compiler->om.areValueTypesEnabled())
          {
-         lowerValueTypeOperations(nodeIter, node, tt);
+         lowerValueTypeOperations(transformations, node, tt);
          }
       }
 
@@ -762,20 +775,14 @@ TR::TreeLowering::perform()
  *
  */
 void
-TR::TreeLowering::lowerValueTypeOperations(TR::PreorderNodeIterator& nodeIter, TR::Node* node, TR::TreeTop* tt)
+TR::TreeLowering::lowerValueTypeOperations(TransformationManager& transformations, TR::Node* node, TR::TreeTop* tt)
    {
    TR::SymbolReferenceTable * symRefTab = comp()->getSymRefTab();
 
    if (node->getOpCode().isCall() &&
          symRefTab->isNonHelper(node->getSymbolReference(), TR::SymbolReferenceTable::objectEqualityComparisonSymbol))
       {
-      // turn the non-helper call into a VM helper call
-      node->setSymbolReference(symRefTab->findOrCreateAcmpHelperSymbolRef());
-      static const bool disableAcmpFastPath =  NULL != feGetEnv("TR_DisableAcmpFastpath");
-      if (!disableAcmpFastPath)
-         {
-         fastpathAcmpHelper(nodeIter, node, tt);
-         }
+      transformations.addTransformation(getTransformer<AcmpTransformer>(), node, tt);
       }
    else if (node->getOpCodeValue() == TR::ArrayStoreCHK)
       {
