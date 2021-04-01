@@ -597,6 +597,16 @@ AcmpTransformer::fastpathAcmpHelper(TR::Node * const node, TR::TreeTop * const t
       }
    }
 
+class ArrayStoreCHKTransformer: public TR::TreeLowering::Transformer
+   {
+   public:
+   explicit ArrayStoreCHKTransformer(TR::TreeLowering* opt)
+      : TR::TreeLowering::Transformer(opt)
+      {}
+
+   void lower(TR::Node* const node, TR::TreeTop* const tt) override;
+   };
+
 /**
  * If value types are enabled, and the value that is being assigned to the array
  * element might be a null reference, lower the ArrayStoreCHK by splitting the
@@ -607,7 +617,7 @@ AcmpTransformer::fastpathAcmpHelper(TR::Node * const node, TR::TreeTop * const t
  * @param tt is the treetop at the root of the tree ancoring the current node
  */
 void
-TR::TreeLowering::lowerArrayStoreCHK(TR::Node *node, TR::TreeTop *tt)
+ArrayStoreCHKTransformer::lower(TR::Node* const node, TR::TreeTop* const tt)
    {
    // Pattern match the ArrayStoreCHK operands to get the source of the assignment
    // (sourceChild) and the array to which an element will have a value assigned (destChild)
@@ -786,6 +796,6 @@ TR::TreeLowering::lowerValueTypeOperations(TransformationManager& transformation
       }
    else if (node->getOpCodeValue() == TR::ArrayStoreCHK)
       {
-      lowerArrayStoreCHK(node, tt);
+      transformations.addTransformation(getTransformer<ArrayStoreCHKTransformer>(), node, tt);
       }
    }

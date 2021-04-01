@@ -257,7 +257,6 @@ class TreeLowering : public TR::Optimization
 
    // helpers related to Valhalla value type lowering
    void lowerValueTypeOperations(TransformationManager& transformation, TR::Node* node, TR::TreeTop* tt);
-   void lowerArrayStoreCHK(TR::Node* node, TR::TreeTop* tt);
 
    template <typename T>
    Transformer* getTransformer() { return new (comp()->region()) T(this); }
